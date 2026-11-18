@@ -1,0 +1,36 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ProCoders\ThemeRelease\Support;
+
+/**
+ * Every option, transient, hook and constant name the plugin owns, in one place.
+ */
+final class Keys
+{
+    public const string PREFIX = 'pc_theme_release_';
+    public const string SETTINGS = 'pc_theme_release_settings';
+    public const string SECRETS = 'pc_theme_release_secrets';
+    public const string THEMES = 'pc_theme_release_themes';
+    public const string STATE = 'pc_theme_release_state';
+    public const string LOG = 'pc_theme_release_log';
+    public const string RATE_WINDOW = 'pc_theme_release_webhook_window';
+    public const string DELIVERY_PREFIX = 'pc_theme_release_dlv_';
+    public const string COMPARE_PREFIX = 'pc_theme_release_cmp_';
+    public const string CRON_HOOK = 'pc_theme_release_check';
+    public const string LOCK = 'pc_theme_release';
+    public const string TEXT_DOMAIN = 'pc-theme-release';
+    public const string PAGE_SLUG = 'pc-theme-release';
+    public const string REST_NAMESPACE = 'pc-theme-release/v1';
+
+    public const string CONST_CHANNEL = 'PC_THEME_RELEASE_CHANNEL';
+    public const string CONST_TOKEN = 'PC_THEME_RELEASE_GITHUB_TOKEN';
+    public const string CONST_WEBHOOK_SECRET = 'PC_THEME_RELEASE_WEBHOOK_SECRET';
+
+    /** @return list<string> Options removed on uninstall. */
+    public static function options(): array
+    {
+        return [self::SETTINGS, self::SECRETS, self::THEMES, self::STATE, self::LOG];
+    }
+}

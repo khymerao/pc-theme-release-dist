@@ -1,0 +1,43 @@
+<?php
+
+declare(strict_types=1);
+
+namespace ProCoders\ThemeRelease\GitHub;
+
+/**
+ * WordPress HTTP API adapter. Redirects are never followed here: GitHubClient decides where a
+ * redirect may go and which headers travel with it.
+ */
+final class WpHttpClient implements HttpClient
+{
+    public function get(string $url, array $headers, int $timeout, ?string $saveTo = null): HttpResponse
+    {
+        $args = [
+            'method' => 'GET',
+            'timeout' => $timeout,
+            'redirection' => 0,
+            'headers' => $headers,
+            'user-agent' => 'pc-theme-release',
+            'reject_unsafe_urls' => true,
+        ];
+        if (null !== $saveTo) {
+            $args['stream'] = true;
+            $args['filename'] = $saveTo;
+        }
+        $response = wp_safe_remote_request($url, $args);
+        if (is_wp_error($response)) {
+            throw new GitHubError(GitHubErrorKind::Transport, 0);
+        }
+
+        $normalised = [];
+        foreach (wp_remote_retrieve_headers($response) as $name => $value) {
+            $normalised[strtolower((string) $name)] = is_array($value) ? (string) end($value) : (string) $value;
+        }
+
+        return new HttpResponse(
+            (int) wp_remote_retrieve_response_code($response),
+            $normalised,
+            null === $saveTo ? (string) wp_remote_retrieve_body($response) : '',
+        );
+    }
+}
