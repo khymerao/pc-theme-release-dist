@@ -50,10 +50,24 @@ final class MappingRepository
         return null;
     }
 
+    /**
+     * A plain theme directory name: no path separator, no leading dot (so never "." or ".."), no control
+     * character. Core deletes the old theme directory by this name on update or rollback (audit S2).
+     * Dots inside a name ("a..b") are an ordinary directory name.
+     */
+    public static function isSafeStylesheet(string $stylesheet): bool
+    {
+        return '' !== $stylesheet
+            && strlen($stylesheet) <= 200
+            && '.' !== $stylesheet[0]
+            && 1 !== preg_match('#[/\\\\\x00-\x1F\x7F]#', $stylesheet);
+    }
+
     /** @throws ValidationError */
     public function add(string $stylesheet, string $repo, string $branchOverride): Mapping
     {
-        if (! $this->themes->exists($stylesheet)) {
+        // Only a key of wp_get_themes(): wp_get_theme() also "finds" paths such as ../uploads.
+        if (! self::isSafeStylesheet($stylesheet) || ! array_key_exists($stylesheet, $this->themes->installed())) {
             throw new ValidationError('theme_not_installed', 'theme');
         }
         $name = RepoName::fromString($repo);
@@ -94,6 +108,32 @@ final class MappingRepository
         }
     }
 
+    /**
+     * Removes stored pairs that all() ignores (unsafe theme key, invalid repository) and returns their
+     * theme keys, so the caller can report each one once.
+     *
+     * @return list<string>
+     */
+    public function dropInvalid(): array
+    {
+        $raw = $this->options->get(Keys::THEMES, []);
+        if (! is_array($raw)) {
+            return [];
+        }
+        $dropped = [];
+        foreach ($raw as $stylesheet => $data) {
+            if (! is_array($data) || null === $this->hydrate((string) $stylesheet, $data)) {
+                $dropped[] = (string) $stylesheet;
+                unset($raw[$stylesheet]);
+            }
+        }
+        if ([] !== $dropped) {
+            $this->options->set(Keys::THEMES, $raw, false);
+        }
+
+        return $dropped;
+    }
+
     /** Removes the pair with its record and freeze flag; theme files are not touched. */
     public function remove(string $stylesheet): ?Mapping
     {
@@ -110,6 +150,10 @@ final class MappingRepository
     /** @param array<mixed> $data */
     private function hydrate(string $stylesheet, array $data): ?Mapping
     {
+        // The shape only: a mapping of a theme that is missing on disk right now is kept (status "missing").
+        if (! self::isSafeStylesheet($stylesheet)) {
+            return null;
+        }
         try {
             $repo = RepoName::fromString(is_string($data['repo'] ?? null) ? $data['repo'] : '');
         } catch (ValidationError) {

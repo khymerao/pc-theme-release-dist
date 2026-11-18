@@ -31,7 +31,7 @@ final class Notices
 
     public function render(): void
     {
-        if (! current_user_can('manage_options')) {
+        if (! Capability::canManage()) {
             return;
         }
         $screen = function_exists('get_current_screen') ? get_current_screen() : null;

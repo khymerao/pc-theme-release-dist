@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4
+class ComposerStaticInit410f384baa78a5413d0f72d740fd482f
 {
     public static $prefixLengthsPsr4 = array (
         'P' =>
@@ -24,6 +24,7 @@ class ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4
         'Composer\\InstalledVersions' => __DIR__ . '/..' . '/composer/InstalledVersions.php',
         'ProCoders\\ThemeRelease\\Admin\\Actions' => __DIR__ . '/../..' . '/src/Admin/Actions.php',
         'ProCoders\\ThemeRelease\\Admin\\AdminPage' => __DIR__ . '/../..' . '/src/Admin/AdminPage.php',
+        'ProCoders\\ThemeRelease\\Admin\\Capability' => __DIR__ . '/../..' . '/src/Admin/Capability.php',
         'ProCoders\\ThemeRelease\\Admin\\ErrorText' => __DIR__ . '/../..' . '/src/Admin/ErrorText.php',
         'ProCoders\\ThemeRelease\\Admin\\Input' => __DIR__ . '/../..' . '/src/Admin/Input.php',
         'ProCoders\\ThemeRelease\\Admin\\MessageCode' => __DIR__ . '/../..' . '/src/Admin/MessageCode.php',
@@ -38,6 +39,7 @@ class ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4
         'ProCoders\\ThemeRelease\\Config\\SettingsRepository' => __DIR__ . '/../..' . '/src/Config/SettingsRepository.php',
         'ProCoders\\ThemeRelease\\Config\\SiteBinding' => __DIR__ . '/../..' . '/src/Config/SiteBinding.php',
         'ProCoders\\ThemeRelease\\Config\\SiteContext' => __DIR__ . '/../..' . '/src/Config/SiteContext.php',
+        'ProCoders\\ThemeRelease\\Config\\SiteScope' => __DIR__ . '/../..' . '/src/Config/SiteScope.php',
         'ProCoders\\ThemeRelease\\GitHub\\CompareResult' => __DIR__ . '/../..' . '/src/GitHub/CompareResult.php',
         'ProCoders\\ThemeRelease\\GitHub\\Containment' => __DIR__ . '/../..' . '/src/GitHub/Containment.php',
         'ProCoders\\ThemeRelease\\GitHub\\GitHubClient' => __DIR__ . '/../..' . '/src/GitHub/GitHubClient.php',
@@ -62,8 +64,10 @@ class ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4
         'ProCoders\\ThemeRelease\\Lifecycle\\MissingAutoloadNotice' => __DIR__ . '/../..' . '/src/Lifecycle/MissingAutoloadNotice.php',
         'ProCoders\\ThemeRelease\\Lifecycle\\Scheduler' => __DIR__ . '/../..' . '/src/Lifecycle/Scheduler.php',
         'ProCoders\\ThemeRelease\\Lifecycle\\TransientPurger' => __DIR__ . '/../..' . '/src/Lifecycle/TransientPurger.php',
+        'ProCoders\\ThemeRelease\\Lifecycle\\UpdateCache' => __DIR__ . '/../..' . '/src/Lifecycle/UpdateCache.php',
         'ProCoders\\ThemeRelease\\Lifecycle\\WpScheduler' => __DIR__ . '/../..' . '/src/Lifecycle/WpScheduler.php',
         'ProCoders\\ThemeRelease\\Lifecycle\\WpTransientPurger' => __DIR__ . '/../..' . '/src/Lifecycle/WpTransientPurger.php',
+        'ProCoders\\ThemeRelease\\Lifecycle\\WpUpdateCache' => __DIR__ . '/../..' . '/src/Lifecycle/WpUpdateCache.php',
         'ProCoders\\ThemeRelease\\Plugin' => __DIR__ . '/../..' . '/src/Plugin.php',
         'ProCoders\\ThemeRelease\\Release\\ChannelRelease' => __DIR__ . '/../..' . '/src/Release/ChannelRelease.php',
         'ProCoders\\ThemeRelease\\Release\\Checker' => __DIR__ . '/../..' . '/src/Release/Checker.php',
@@ -122,9 +126,9 @@ class ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInitb36f3edbf7581f63140ac38559fb38d4::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit410f384baa78a5413d0f72d740fd482f::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit410f384baa78a5413d0f72d740fd482f::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit410f384baa78a5413d0f72d740fd482f::$classMap;
 
         }, null, ClassLoader::class);
     }

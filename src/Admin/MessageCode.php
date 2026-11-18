@@ -37,6 +37,7 @@ enum MessageCode: string
     case ThemeAlreadyMapped = 'theme_already_mapped';
     case RepoAlreadyMapped = 'repo_already_mapped';
     case TagNotInChannel = 'tag_not_in_channel';
+    case TagAlreadyRecorded = 'tag_already_recorded';
     case MappingGone = 'mapping_gone';
     case ThemeUnavailable = 'theme_unavailable';
     case RollbackTargetGone = 'rollback_target_gone';
@@ -103,6 +104,7 @@ enum MessageCode: string
             self::ThemeAlreadyMapped => __('Error: this theme is already managed.', 'pc-theme-release'),
             self::RepoAlreadyMapped => __('Error: this repository is already mapped to another theme.', 'pc-theme-release'),
             self::TagNotInChannel => __('Error: that tag is not a tag of this site\'s channel. Run Check now and try again.', 'pc-theme-release'),
+            self::TagAlreadyRecorded => __('Error: an installed tag is already recorded for this theme. Nothing was changed.', 'pc-theme-release'),
             self::MappingGone => __('Error: this theme is no longer managed.', 'pc-theme-release'),
             self::ThemeUnavailable => __('Error: the theme is missing on disk or managed by Git Updater.', 'pc-theme-release'),
             self::RollbackTargetGone => __('Error: that tag is no longer available for this channel. Nothing was installed.', 'pc-theme-release'),

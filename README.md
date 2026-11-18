@@ -17,13 +17,17 @@ environment variables, no runtime libraries.
   `update_themes` transient.
 
 Requirements: WordPress 6.4+, PHP 8.3+, outbound HTTPS to `api.github.com` and `codeload.github.com`.
-Single-site installs only.
+Single-site installs only. On a multisite network it works on the **main site** only: on every
+other site it offers nothing, installs nothing and shows a notice saying so.
 
 ## Install
 
 Upload `pc-theme-release.zip` (built with `composer build`, see *Development*) under
 *Plugins → Add New → Upload*, activate, then open **Appearance → Theme Release**. Only
-administrators (`manage_options`) see the screen; updates and rollbacks also need `update_themes`.
+users with both `manage_options` and `update_themes` see the screen or change any of its settings,
+because what is configured here feeds WordPress's theme updates. While `DISALLOW_FILE_MODS` is set
+WordPress grants `update_themes` to nobody and nothing can be installed, so there `manage_options`
+alone is enough for the settings; updates and rollbacks stay disabled.
 The screen has four tabs: *Themes* (daily work: status, Check now, install / roll back), *Channel*,
 *GitHub* (token and webhook) and *Health & log*. The setup checklist links each step to its tab.
 
@@ -45,7 +49,9 @@ The screen has four tabs: *Themes* (daily work: status, Check now, install / rol
 3. **Webhook secret** (tab *GitHub*). Click *Generate a new webhook secret* and copy it — it is shown once.
 4. **Themes** (tab *Themes*, the default). Add each installed theme with its repository (`owner/repo`). Then pick the tag that
    is installed now (pre-selected when `style.css` `Version` matches). Until you do, the plugin
-   compares against `style.css` `Version`.
+   compares against `style.css` `Version`. The tag can be picked once; after that the plugin records
+   every install itself. Only themes directly under `wp-content/themes/` can be managed (not
+   themes in a sub-folder such as `group/theme`).
 5. **GitHub webhook** in each theme repository: *Settings → Webhooks → Add webhook*
    - Payload URL: shown on the plugin screen's *GitHub* tab (`https://SITE/wp-json/pc-theme-release/v1/webhook`)
    - Content type: **application/json** (form-encoded deliveries are refused with 415)
@@ -127,6 +133,9 @@ to the theme's directory name. A `style.css` *Version* that differs from the tag
   either the normal WordPress update (it shows "Update to 1.0.1" even though that number is lower)
   or the row's **Install v1.0.1** button → *Switch to production*. Neither freezes the theme.
   A frozen theme gets no offer: unfreeze it first.
+  Because that offer is a normal WordPress update, **Update all** (Dashboard → Updates) installs it
+  too, even though its version number is lower. To keep such a theme where it is, update the other
+  themes one by one, or **freeze** it (a rollback freezes the theme) until you want to move it.
 - With `DISALLOW_FILE_MODS` updates and rollbacks are disabled; settings still work.
 - Warnings: *tag moved* (installed tag now points to another commit), *no longer on GitHub*,
   *branch not found*, token errors, rate limits.
@@ -195,7 +204,8 @@ that theme and says so. Deactivate Git Updater (or remove the header) to switch.
 
 ## Uninstall
 
-Deleting the plugin removes its options, transients and cron event. Theme files are never touched.
+Deleting the plugin removes its options, transients and cron event, and its entries in WordPress's
+list of available theme updates (deactivating removes those entries too). Theme files are never touched.
 Revoke the site's token in GitHub and delete the repository webhooks.
 
 ## Development
@@ -210,3 +220,33 @@ composer build         # build/pc-theme-release.zip with vendor/autoload.php, no
 
 Code: PSR-4 under `src/` (`ProCoders\ThemeRelease\`), PSR-12, one class per file, constructor
 injection, interfaces at the WordPress/GitHub boundaries.
+
+## Releasing to the distribution repository
+
+The install-ready plugin lives in a separate repository (`pc-theme-release-dist`, cloned next to
+this one) with one squash commit and one tag per release, and no development files.
+
+Once, mark that repository as the distribution repository. The script refuses any folder without
+the marker, so a wrong `--dist` (or this repository) is never wiped:
+
+```sh
+cd ../pc-theme-release-dist
+touch .pc-theme-release-dist
+git add .pc-theme-release-dist
+git commit -m "Mark this repository as the distribution repository"
+```
+
+1. Bump `Version:` in `pc-theme-release.php` and commit.
+2. Run:
+
+   ```sh
+   composer publish-dist -- 1.1.0 --message="Settings tabs" --push
+   ```
+
+The script checks that the version is SemVer and matches the header, that the distribution
+repository is not this repository and has the marker, that both repositories have no uncommitted
+changes and that the tag is new. It then builds with `bin/build-zip.php` (which writes only into
+`build/` or the system temp folder; `COMPOSER_BIN` may name another composer program), replaces
+the distribution files (everything but `.git` and the marker; `composer.json` is left out), commits
+`v1.1.0 Settings tabs` with this repository's commit in the body, tags `v1.1.0` and, with
+`--push`, pushes both. Another location: `--dist=PATH` or `PCTR_DIST_DIR`.

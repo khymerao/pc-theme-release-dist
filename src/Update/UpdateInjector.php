@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace ProCoders\ThemeRelease\Update;
 
 use ProCoders\ThemeRelease\Config\SiteContext;
-use ProCoders\ThemeRelease\GitHub\GitHubClient;
 use ProCoders\ThemeRelease\Theme\MappingRepository;
 
 /**
@@ -34,14 +33,11 @@ final class UpdateInjector
         $noUpdate = isset($transient->no_update) && is_array($transient->no_update) ? $transient->no_update : [];
         $operational = null !== $this->site->channel();
         $statuses = $this->offers->all();
+        $repos = array_values(array_map(static fn (ThemeStatus $status): string => $status->mapping->repo->full(), $statuses));
 
-        // An offer this plugin made for a theme it no longer manages is withdrawn.
-        foreach ($response as $stylesheet => $entry) {
-            $package = is_array($entry) && is_string($entry['package'] ?? null) ? $entry['package'] : '';
-            if (! isset($statuses[$stylesheet]) && str_starts_with($package, GitHubClient::API_BASE . '/repos/')) {
-                unset($response[$stylesheet]);
-            }
-        }
+        // An entry this plugin wrote for a theme it no longer manages is withdrawn; other updaters' are kept.
+        $response = array_filter($response, static fn (mixed $entry, mixed $stylesheet): bool => isset($statuses[$stylesheet]) || ! self::isOwnEntry($entry, $repos), ARRAY_FILTER_USE_BOTH);
+        $noUpdate = array_filter($noUpdate, static fn (mixed $entry, mixed $stylesheet): bool => isset($statuses[$stylesheet]) || ! self::isOwnEntry($entry, $repos), ARRAY_FILTER_USE_BOTH);
 
         foreach ($statuses as $stylesheet => $status) {
             unset($response[$stylesheet], $noUpdate[$stylesheet]);
@@ -52,6 +48,7 @@ final class UpdateInjector
                 'package' => '',
                 'requires' => '',
                 'requires_php' => '',
+                UpdateOffer::ENTRY_MARKER => true,
             ];
             if ($operational && null !== $status->offer) {
                 $entry['new_version'] = ltrim($status->offer->tag, 'vV');
@@ -65,6 +62,47 @@ final class UpdateInjector
         $transient->no_update = $noUpdate;
 
         return $transient;
+    }
+
+    /**
+     * Removes every entry this plugin wrote (deactivation, uninstall).
+     *
+     * @param list<string> $repos owner/repo of the stored mappings, to recognise unmarked entries of v1.0.0
+     */
+    public static function stripOwn(mixed $transient, array $repos = []): mixed
+    {
+        if (! $transient instanceof \stdClass) {
+            return $transient;
+        }
+        foreach (['response', 'no_update'] as $list) {
+            if (isset($transient->$list) && is_array($transient->$list)) {
+                $transient->$list = array_filter($transient->$list, static fn (mixed $entry): bool => ! self::isOwnEntry($entry, $repos));
+            }
+        }
+
+        return $transient;
+    }
+
+    /**
+     * An entry this plugin wrote: marked, or (written by v1.0.0, before the marker) an own-form package
+     * of a repository that is mapped here.
+     *
+     * @param list<string> $repos owner/repo, lower case
+     */
+    public static function isOwnEntry(mixed $entry, array $repos = []): bool
+    {
+        if (! is_array($entry)) {
+            return false;
+        }
+        if (true === ($entry[UpdateOffer::ENTRY_MARKER] ?? null)) {
+            return true;
+        }
+        $package = is_string($entry['package'] ?? null) ? $entry['package'] : '';
+        if ([] === $repos || 1 !== preg_match(UpdateOffer::PACKAGE_PATTERN, $package, $m)) {
+            return false;
+        }
+
+        return in_array(strtolower(rawurldecode($m[1]) . '/' . rawurldecode($m[2])), $repos, true);
     }
 
     /**

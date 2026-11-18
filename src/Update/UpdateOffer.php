@@ -22,6 +22,11 @@ use ProCoders\ThemeRelease\Theme\ThemeDirectory;
  */
 final class UpdateOffer
 {
+    /** The packages this plugin offers: a commit zipball of the GitHub API, nothing else. */
+    public const string PACKAGE_PATTERN = '#^https://api\.github\.com/repos/([^/]+)/([^/]+)/zipball/([0-9a-f]{40})$#';
+    /** Set on every `update_themes` entry this plugin writes, so only those are ever withdrawn (audit S5). */
+    public const string ENTRY_MARKER = 'pc_theme_release_managed';
+
     public function __construct(
         private readonly MappingRepository $mappings,
         private readonly StateStore $state,

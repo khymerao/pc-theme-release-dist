@@ -12,6 +12,8 @@ final class Keys
     public const string PREFIX = 'pc_theme_release_';
     public const string SETTINGS = 'pc_theme_release_settings';
     public const string SECRETS = 'pc_theme_release_secrets';
+    /** Set once every stored secret is bound to its slot; kept when the secrets are deleted (audit S9). */
+    public const string SECRETS_FORMAT = 'pc_theme_release_secrets_format';
     public const string THEMES = 'pc_theme_release_themes';
     public const string STATE = 'pc_theme_release_state';
     public const string LOG = 'pc_theme_release_log';
@@ -31,6 +33,6 @@ final class Keys
     /** @return list<string> Options removed on uninstall. */
     public static function options(): array
     {
-        return [self::SETTINGS, self::SECRETS, self::THEMES, self::STATE, self::LOG];
+        return [self::SETTINGS, self::SECRETS, self::SECRETS_FORMAT, self::THEMES, self::STATE, self::LOG];
     }
 }

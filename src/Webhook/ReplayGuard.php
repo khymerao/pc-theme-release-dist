@@ -26,17 +26,26 @@ final class ReplayGuard
         return null !== $delivery && 1 === preg_match(self::UUID, strtolower(trim($delivery)));
     }
 
-    /** True the first time (and remembers id and body), false for a replay by id or by body. */
-    public function firstSeen(string $delivery, string $rawBody): bool
+    /** True for a replay by id or by body. Writes nothing. */
+    public function seen(string $delivery, string $rawBody): bool
     {
-        $idKey = Keys::DELIVERY_PREFIX . 'id_' . md5(strtolower(trim($delivery)));
-        $bodyKey = Keys::DELIVERY_PREFIX . 'body_' . hash('sha256', $rawBody);
-        if (null !== $this->store->get($idKey) || null !== $this->store->get($bodyKey)) {
-            return false;
-        }
-        $this->store->set($idKey, 1, self::TTL);
-        $this->store->set($bodyKey, 1, self::TTL);
+        return null !== $this->store->get(self::idKey($delivery)) || null !== $this->store->get(self::bodyKey($rawBody));
+    }
 
-        return true;
+    /** Remembers id and body for 24 hours: called only for a delivery that is going to be processed. */
+    public function remember(string $delivery, string $rawBody): void
+    {
+        $this->store->set(self::idKey($delivery), 1, self::TTL);
+        $this->store->set(self::bodyKey($rawBody), 1, self::TTL);
+    }
+
+    private static function idKey(string $delivery): string
+    {
+        return Keys::DELIVERY_PREFIX . 'id_' . md5(strtolower(trim($delivery)));
+    }
+
+    private static function bodyKey(string $rawBody): string
+    {
+        return Keys::DELIVERY_PREFIX . 'body_' . hash('sha256', $rawBody);
     }
 }

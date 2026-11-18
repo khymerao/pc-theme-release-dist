@@ -10,11 +10,14 @@ namespace ProCoders\ThemeRelease\GitHub;
  */
 final class WpHttpClient implements HttpClient
 {
-    public function get(string $url, array $headers, int $timeout, ?string $saveTo = null): HttpResponse
+    public function get(string $url, array $headers, int $timeout, ?string $saveTo, int $maxBytes): HttpResponse
     {
         $args = [
             'method' => 'GET',
             'timeout' => $timeout,
+            // Explicit: the default is filterable (http_request_args), TLS verification is not (audit S11).
+            'sslverify' => true,
+            'limit_response_size' => $maxBytes + 1,
             'redirection' => 0,
             'headers' => $headers,
             'user-agent' => 'pc-theme-release',

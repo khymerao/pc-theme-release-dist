@@ -20,7 +20,7 @@ use ProCoders\ThemeRelease\Update\UpdateInjector;
 use ProCoders\ThemeRelease\Update\UpdateOffer;
 
 /**
- * admin-post.php handlers. Each one: POST only, manage_options, its own nonce, then redirect with a code
+ * admin-post.php handlers. Each one: POST only, manage_options and update_themes, its own nonce, then redirect with a code
  * to the tab its form lives on (success and error alike).
  */
 final class Actions
@@ -125,7 +125,7 @@ final class Actions
         if ('POST' !== $input->method) {
             $responder->deny(405);
         }
-        if (! current_user_can('manage_options')) {
+        if (! Capability::canManage()) {
             $responder->deny(403);
         }
         if (false === wp_verify_nonce($input->nonce(), $action)) {
@@ -225,6 +225,10 @@ final class Actions
         $mapping = $this->mappings->get($input->text('theme'));
         if (null === $mapping) {
             throw new ValidationError('mapping_gone');
+        }
+        // Seeding only records what is installed when nothing is recorded yet; it never rewrites a record (audit S8).
+        if (null !== $mapping->record) {
+            throw new ValidationError('tag_already_recorded');
         }
         $release = $this->offers->currentState($mapping)->release($input->text('tag'));
         if (null === $release) {

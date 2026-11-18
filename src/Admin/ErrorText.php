@@ -33,6 +33,7 @@ final class ErrorText
             GitHubErrorKind::Server => __('Error: GitHub answered with a server error. It is retried at the next check.', 'pc-theme-release'),
             GitHubErrorKind::Transport => __('Error: GitHub could not be reached from this server.', 'pc-theme-release'),
             GitHubErrorKind::NoToken => __('Error: no usable GitHub token.', 'pc-theme-release'),
+            GitHubErrorKind::TooLarge => __('Error: GitHub\'s answer was larger than the plugin accepts. It is retried at the next check.', 'pc-theme-release'),
             default => __('Error: GitHub returned an unexpected answer.', 'pc-theme-release'),
         };
     }

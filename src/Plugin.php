@@ -11,6 +11,7 @@ use ProCoders\ThemeRelease\Admin\WpResponder;
 use ProCoders\ThemeRelease\Config\SettingsRepository;
 use ProCoders\ThemeRelease\Config\SiteBinding;
 use ProCoders\ThemeRelease\Config\SiteContext;
+use ProCoders\ThemeRelease\Config\SiteScope;
 use ProCoders\ThemeRelease\GitHub\GitHubClient;
 use ProCoders\ThemeRelease\GitHub\WpHttpClient;
 use ProCoders\ThemeRelease\Health\CronHealth;
@@ -79,6 +80,10 @@ final class Plugin
 
     public static function boot(): void
     {
+        if (SiteScope::inert()) {
+            self::registerInert();
+            return;
+        }
         $plugin = self::instance();
         self::registerSelfHeal(new WpScheduler());
 
@@ -90,6 +95,9 @@ final class Plugin
         add_filter('upgrader_pre_download', [$plugin->downloader, 'preDownload'], 10, 4);
         add_filter('upgrader_source_selection', [$plugin->sourceGuard, 'select'], 10, 4);
         add_filter('upgrader_post_install', [$plugin->recorder, 'afterInstall'], 20, 3);
+        // A core update holds the upgrader lock from the download until the whole run ends (audit S6).
+        add_action('upgrader_process_complete', [$plugin->downloader, 'releaseLock'], 10, 0);
+        add_action('shutdown', [$plugin->downloader, 'releaseLock'], 10, 0);
         add_action(Keys::CRON_HOOK, [$plugin->checker, 'runScheduled']);
         add_action('rest_api_init', [$plugin->restRoute, 'register']);
         add_filter('site_status_tests', [$plugin->siteHealth, 'register']);
@@ -108,6 +116,13 @@ final class Plugin
     public static function registerSelfHeal(Scheduler $scheduler): void
     {
         add_action('init', [$scheduler, 'schedule']);
+    }
+
+    /** A multisite site other than the main site: a notice, and own packages are refused (audit S1, S3). */
+    public static function registerInert(): void
+    {
+        add_action('admin_notices', [SiteScope::class, 'renderNotice']);
+        add_filter('upgrader_pre_download', [SiteScope::class, 'refuseOwnPackage'], 10, 4);
     }
 
     private static function build(): self

@@ -73,12 +73,16 @@ final class WebhookController
         if (! is_array($payload)) {
             return WebhookResult::error(400);
         }
+        // Replays first: only first-seen deliveries count toward the limit (audit S4), and a delivery
+        // refused with 429 is not remembered, so GitHub's redelivery of it is processed later.
+        $delivery = (string) $request->delivery;
+        if ($this->replays->seen($delivery, $request->body)) {
+            return WebhookResult::ignored(200);
+        }
         if (! $this->limiter->allow()) {
             return WebhookResult::error(429);
         }
-        if (! $this->replays->firstSeen((string) $request->delivery, $request->body)) {
-            return WebhookResult::ignored(200);
-        }
+        $this->replays->remember($delivery, $request->body);
         $this->state->setInt(StateKey::LAST_WEBHOOK_AT, $this->clock->now());
 
         $event = (string) $request->event;

@@ -19,6 +19,10 @@ final class GitHubClient
     public const string DOWNLOAD_HOST = 'codeload.github.com';
     public const int PER_PAGE = 100;
     public const int MAX_TAG_PAGES = 10;
+    /** Largest accepted API answer body, in bytes (at most 2 MiB, audit S11). */
+    public const int MAX_API_BYTES = 2_097_152;
+    /** Largest accepted theme zip, in bytes (at most 50 MiB, audit S11). */
+    public const int MAX_ZIP_BYTES = 52_428_800;
     private const int API_TIMEOUT = 15;
     private const int DOWNLOAD_TIMEOUT = 300;
 
@@ -157,12 +161,33 @@ final class GitHubClient
             }
             $headers['Authorization'] = 'Bearer ' . $token;
         }
-        $response = $this->http->get($url, $headers, $timeout, $saveTo);
+        $max = null === $saveTo ? self::MAX_API_BYTES : self::MAX_ZIP_BYTES;
+        $response = $this->http->get($url, $headers, $timeout, $saveTo, $max);
         if ($authenticated) {
             $this->remember($response);
         }
+        if (self::received($response, $saveTo) > $max) {
+            throw new GitHubError(GitHubErrorKind::TooLarge, $response->status);
+        }
 
         return $response;
+    }
+
+    /**
+     * The size of the answer: the announced length or what arrived, whichever is larger. The HTTP layer
+     * stops reading one byte past the limit, so "more than the limit" is seen without reading it all.
+     */
+    private static function received(HttpResponse $response, ?string $saveTo): int
+    {
+        $announced = (string) $response->header('content-length');
+        $size = ctype_digit($announced) ? (int) $announced : 0;
+        if (null === $saveTo) {
+            return max($size, strlen($response->body));
+        }
+        clearstatcache(true, $saveTo);
+        $written = is_file($saveTo) ? (int) filesize($saveTo) : 0;
+
+        return max($size, $written);
     }
 
     private function remember(HttpResponse $response): void

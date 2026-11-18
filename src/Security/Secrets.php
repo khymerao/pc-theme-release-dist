@@ -20,6 +20,10 @@ final class Secrets implements TokenProvider
     public const int TOKEN_MAX = 255;
     public const int WEBHOOK_SECRET_MIN = 16;
     public const int WEBHOOK_SECRET_MAX = 255;
+    /** The "ends with …" hint is shown only for secrets at least this long (audit S9). */
+    public const int HINT_MIN_LENGTH = 32;
+    /** Value of Keys::SECRETS_FORMAT once every value is bound to its slot; legacy values are refused after. */
+    private const int BOUND_FORMAT = 2;
     private const string TOKEN_PATTERN = '/^[A-Za-z0-9_]+$/';
     /** Example values from documentation that must never work as a secret. */
     private const array PLACEHOLDERS = ['a-long-random-string', 'put your unique phrase here', 'your-webhook-secret', 'change-me-change-me'];
@@ -51,15 +55,18 @@ final class Secrets implements TokenProvider
             return SecretSource::None;
         }
 
-        return null === $this->vault->decrypt($stored) ? SecretSource::Undecryptable : SecretSource::Database;
+        return null === $this->plain($kind) ? SecretSource::Undecryptable : SecretSource::Database;
     }
 
-    /** Last four characters for display ("ends with …abcd"), never more. */
+    /** Last four characters for display ("ends with …abcd"), never more, and only for long secrets. */
     public function hint(SecretKind $kind): ?string
     {
         $value = $this->value($kind);
+        if (null === $value || self::HINT_MIN_LENGTH > strlen($value)) {
+            return null;
+        }
 
-        return null === $value ? null : substr($value, -4);
+        return substr($value, -4);
     }
 
     /** @throws ValidationError */
@@ -119,6 +126,61 @@ final class Secrets implements TokenProvider
         $this->write($stored);
     }
 
+    /**
+     * The stored plaintext of a slot. A legacy (unbound) value is read once: every legacy slot is then
+     * rewritten bound to its slot and the format is recorded, after which legacy values are refused.
+     */
+    private function plain(SecretKind $kind): ?string
+    {
+        $stored = $this->stored();
+        $value = $stored[$kind->value] ?? null;
+        if (! is_string($value) || '' === $value) {
+            return null;
+        }
+        if (SecretVault::isBound($value)) {
+            return $this->vault->decrypt($value, $kind);
+        }
+        if ($this->bound() || ! $this->vault->canEncrypt()) {
+            return null;
+        }
+        $this->migrate($stored);
+        $migrated = $this->stored()[$kind->value] ?? null;
+
+        return is_string($migrated) && SecretVault::isBound($migrated) ? $this->vault->decrypt($migrated, $kind) : null;
+    }
+
+    /** @param array<string, mixed> $stored */
+    private function migrate(array $stored): void
+    {
+        foreach (SecretKind::cases() as $kind) {
+            $value = $stored[$kind->value] ?? null;
+            if (! is_string($value) || SecretVault::isBound($value)) {
+                continue;
+            }
+            $plain = $this->vault->decryptLegacy($value);
+            $bound = null === $plain ? null : $this->vault->encrypt($plain, $kind);
+            if (null !== $bound) {
+                $stored[$kind->value] = $bound;
+            }
+        }
+        $this->write($stored);
+        $this->markBound();
+    }
+
+    /** Whether legacy (unbound) values were migrated, or never existed: then they are never read again. */
+    private function bound(): bool
+    {
+        return self::BOUND_FORMAT === $this->options->get(Keys::SECRETS_FORMAT);
+    }
+
+    /** Its own option, so deleting both secrets does not reopen legacy reading (removed on uninstall only). */
+    private function markBound(): void
+    {
+        if (! $this->bound()) {
+            $this->options->set(Keys::SECRETS_FORMAT, self::BOUND_FORMAT, false);
+        }
+    }
+
     /** Drops every database-stored secret (constants are untouched). */
     public function deleteStored(): void
     {
@@ -131,13 +193,19 @@ final class Secrets implements TokenProvider
         if ($this->constantDefined($kind)) {
             throw new ValidationError('secret_in_constant', $kind->value);
         }
-        $cipher = $this->vault->encrypt($plaintext);
+        $cipher = $this->vault->encrypt($plaintext, $kind);
         if (null === $cipher) {
             throw new ValidationError('weak_salts', $kind->value);
         }
         $stored = $this->stored();
+        if (! $this->bound()) {
+            // Bind the other slot's legacy value first, so recording the format does not lock it out.
+            $this->migrate($stored);
+            $stored = $this->stored();
+        }
         $stored[$kind->value] = $cipher;
         $this->write($stored);
+        $this->markBound();
     }
 
     private function value(SecretKind $kind): ?string
@@ -146,9 +214,7 @@ final class Secrets implements TokenProvider
         if ($this->constantDefined($kind)) {
             return $this->constantValue($kind);
         }
-        $stored = $this->stored()[$kind->value] ?? null;
-
-        return is_string($stored) && '' !== $stored ? $this->vault->decrypt($stored) : null;
+        return $this->plain($kind);
     }
 
     private function constantDefined(SecretKind $kind): bool

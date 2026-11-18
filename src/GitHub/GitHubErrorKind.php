@@ -15,4 +15,5 @@ enum GitHubErrorKind: string
     case BadResponse = 'github_bad_response';
     case ForeignRedirect = 'github_foreign_redirect';
     case NoToken = 'github_no_token';
+    case TooLarge = 'github_too_large';
 }

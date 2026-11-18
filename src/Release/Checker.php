@@ -34,6 +34,10 @@ final class Checker
     /** @return int Number of repositories checked (0 when the site is not operational). */
     public function checkAll(string $trigger): int
     {
+        // A stored pair the plugin no longer accepts (e.g. theme "../uploads") is removed and logged once.
+        foreach ($this->mappings->dropInvalid() as $stylesheet) {
+            $this->log->add('mapping_dropped_invalid', $stylesheet);
+        }
         if (! $this->site->isOperational()) {
             return 0;
         }

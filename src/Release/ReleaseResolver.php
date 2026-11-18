@@ -21,7 +21,7 @@ use ProCoders\ThemeRelease\Support\TransientStore;
 final class ReleaseResolver
 {
     public const int LIST_SIZE = 20;
-    public const int CONTAINMENT_TTL = 86400;
+    public const int CONTAINMENT_TTL = 3600;
     /** Uncached compare calls per repository and check, to bound API use (builder's call). */
     public const int COMPARE_BUDGET = 30;
 

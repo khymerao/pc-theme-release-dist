@@ -46,6 +46,10 @@ final class AdminPage
 
     public function register(): void
     {
+        // Users without both capabilities get no menu entry and core's own "not allowed" page.
+        if (! Capability::canManage()) {
+            return;
+        }
         $hook = add_theme_page(
             __('Theme Release', 'pc-theme-release'),
             __('Theme Release', 'pc-theme-release'),
@@ -66,6 +70,9 @@ final class AdminPage
     {
         nocache_headers();
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private');
+        if (! Capability::canManage()) {
+            $this->responder->deny(403);
+        }
         $input = Input::fromGlobals();
         $action = $input->text('action');
         if ('POST' === $input->method && in_array($action, [self::GENERATE_SECRET, self::ROLLBACK, self::SWITCH], true)) {
@@ -78,7 +85,7 @@ final class AdminPage
 
     public function render(): void
     {
-        if (! current_user_can('manage_options')) {
+        if (! Capability::canManage()) {
             $this->responder->deny(403);
         }
         $input = Input::fromGlobals();
@@ -305,9 +312,13 @@ final class AdminPage
             echo '<p>' . esc_html__('Defined in wp-config.php but invalid, so it is not used. Fix it there.', 'pc-theme-release') . '</p></td></tr></tbody></table>';
             return;
         }
-        if (SecretSource::Database === $source) {
+        $hint = SecretSource::Database === $source ? $this->secrets->hint($kind) : null;
+        if (SecretSource::Database === $source && null === $hint) {
+            // Short secrets get no hint: four characters of 16 would give too much away (audit S9).
+            echo '<p>' . esc_html__('Set.', 'pc-theme-release') . '</p>';
+        } elseif (SecretSource::Database === $source) {
             /* translators: %s: last four characters of the secret. */
-            echo '<p>' . esc_html(sprintf(__('Set · ends with …%s', 'pc-theme-release'), (string) $this->secrets->hint($kind))) . '</p>';
+            echo '<p>' . esc_html(sprintf(__('Set · ends with …%s', 'pc-theme-release'), $hint)) . '</p>';
         } elseif (SecretSource::Undecryptable === $source) {
             echo '<p>' . esc_html__('Stored but cannot be decrypted (salts changed). Enter it again.', 'pc-theme-release') . '</p>';
         } else {
