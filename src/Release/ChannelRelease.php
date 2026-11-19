@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease\Release;
 
+use ProCoders\ThemeRelease\GitHub\GitHubClient;
+
 /**
  * A tag that belongs to the site's channel: right suffix and its commit is in the channel branch.
  */
@@ -23,6 +25,12 @@ final readonly class ChannelRelease
         return $version;
     }
 
+    /** The tag as WordPress shows a version: without a leading "v". */
+    public function versionLabel(): string
+    {
+        return ltrim($this->tag, 'vV');
+    }
+
     /** @return array{tag: string, sha: string, date: int|null} */
     public function toArray(): array
     {
@@ -34,7 +42,7 @@ final readonly class ChannelRelease
     {
         $tag = $data['tag'] ?? null;
         $sha = $data['sha'] ?? null;
-        if (! is_string($tag) || ! is_string($sha) || null === SemVer::parse($tag) || 1 !== preg_match('/^[0-9a-f]{40}$/', $sha)) {
+        if (! is_string($tag) || ! is_string($sha) || null === SemVer::parse($tag) || 1 !== preg_match(GitHubClient::SHA_PATTERN, $sha)) {
             return null;
         }
 

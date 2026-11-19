@@ -17,7 +17,7 @@ final readonly class Input
     public static function fromGlobals(): self
     {
         $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
-        // Nonce and capability are verified by Actions::guard() before any value is used.
+        // Nonce and capability are verified by Module::guard() before any value is used.
         // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
         $post = 'POST' === $method ? wp_unslash($_POST) : [];
 

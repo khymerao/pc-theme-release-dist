@@ -4,11 +4,21 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease\Release;
 
+use ProCoders\ThemeRelease\Config\Channel;
+
 /**
  * What the last check learnt about one repository for the site's channel.
  */
 final readonly class RepoState
 {
+    /** Warning codes (stored with the state, shown by Status\ThemeStatus). */
+    public const string TAGS_TRUNCATED = 'tags_truncated';
+    public const string CONTAINMENT_UNKNOWN = 'containment_unknown';
+    public const string OLDER_UNCONFIRMED = 'older_unconfirmed';
+    public const string COMPARE_BUDGET_EXHAUSTED = 'compare_budget_exhausted';
+    /** Error code of a check whose channel branch does not exist on GitHub. */
+    public const string BRANCH_MISSING = 'branch_missing';
+
     /**
      * @param list<ChannelRelease>  $releases  Channel tags contained in the branch, newest first (≤ 20).
      * @param array<string, string> $tagShas   Every tag name GitHub listed (all channels) → commit SHA.
@@ -32,26 +42,31 @@ final readonly class RepoState
     }
 
     /** "channel|branch" the state was computed for; offers from another context are void. */
-    public static function contextFor(\ProCoders\ThemeRelease\Config\Channel $channel, string $branch): string
+    public static function contextFor(Channel $channel, string $branch): string
     {
         return $channel->value . '|' . $branch;
     }
 
+    public function hasWarning(string $code): bool
+    {
+        return in_array($code, $this->warnings, true);
+    }
+
     public function release(string $tag): ?ChannelRelease
     {
-        foreach ($this->releases as $release) {
-            if ($release->tag === $tag) {
-                return $release;
-            }
-        }
-
-        return null;
+        return $this->find(static fn (ChannelRelease $release): bool => $release->tag === $tag);
     }
 
     public function releaseBySha(string $sha): ?ChannelRelease
     {
+        return $this->find(static fn (ChannelRelease $release): bool => $release->sha === $sha);
+    }
+
+    /** @param \Closure(ChannelRelease): bool $matches */
+    private function find(\Closure $matches): ?ChannelRelease
+    {
         foreach ($this->releases as $release) {
-            if ($release->sha === $sha) {
+            if ($matches($release)) {
                 return $release;
             }
         }

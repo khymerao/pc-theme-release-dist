@@ -20,12 +20,31 @@ final class View
         echo '</div>';
     }
 
-    /** Opens a POST form to admin-post.php with the action and its nonce. Caller closes it. */
-    public static function formStart(string $action): void
+    /** Opens a POST form to admin-post.php with the action and its nonce (and an id for `form=` buttons). Caller closes it. */
+    public static function formStart(Action $action, string $id = ''): void
     {
-        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
-        echo '<input type="hidden" name="action" value="' . esc_attr($action) . '">';
-        wp_nonce_field($action);
+        echo '<form' . ('' === $id ? '' : ' id="' . esc_attr($id) . '"') . ' method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        echo '<input type="hidden" name="action" value="' . esc_attr($action->value) . '">';
+        wp_nonce_field($action->value);
+    }
+
+    /** Opens a POST form to the plugin screen itself (on $tab) with the action and its nonce. Caller closes it. */
+    public static function screenFormStart(Action $action, Tab $tab): void
+    {
+        echo '<form method="post" action="' . esc_url($tab->url()) . '">';
+        wp_nonce_field($action->value);
+        echo '<input type="hidden" name="action" value="' . esc_attr($action->value) . '">';
+    }
+
+    public static function hidden(string $name, string $value): void
+    {
+        echo '<input type="hidden" name="' . esc_attr($name) . '" value="' . esc_attr($value) . '">';
+    }
+
+    /** "Back to Theme Release" (or another label) as a plain link, or as the primary button. */
+    public static function backLink(Tab $tab, string $label, bool $button = false): void
+    {
+        echo '<p><a ' . ($button ? 'class="button button-primary" ' : '') . 'href="' . esc_url($tab->url()) . '">' . esc_html($label) . '</a></p>';
     }
 
     public static function submit(string $label, string $kind = 'primary', bool $wrap = true): void
@@ -48,14 +67,6 @@ final class View
             echo '<p class="description">' . esc_html($help) . '</p>';
         }
         echo '</td></tr>';
-    }
-
-    /** A site-timezone date for display; empty when WordPress cannot format it. */
-    public static function date(string $format, int $timestamp): string
-    {
-        $formatted = wp_date($format, $timestamp);
-
-        return is_string($formatted) ? $formatted : '';
     }
 
     public static function valueRow(string $label, string $value): void

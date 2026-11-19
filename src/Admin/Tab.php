@@ -33,12 +33,14 @@ enum Tab: string
     }
 
     /**
-     * The one place that builds the screen URL: page and tab first, then the given extra args.
+     * The one place that builds the screen URL: page and tab first, then the given extra args. Core's
+     * add_query_arg() does not encode values, so each extra value is rawurlencoded here (a stylesheet may hold
+     * `+`, `&` or `#`; a kept field may hold anything).
      *
      * @param array<string, string> $extra
      */
     public function url(array $extra = []): string
     {
-        return add_query_arg(['page' => Keys::PAGE_SLUG, 'tab' => $this->value] + $extra, admin_url('themes.php'));
+        return add_query_arg(['page' => Keys::PAGE_SLUG, 'tab' => $this->value] + array_map('rawurlencode', $extra), admin_url('themes.php'));
     }
 }

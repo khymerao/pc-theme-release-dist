@@ -10,7 +10,7 @@ namespace ProCoders\ThemeRelease\GitHub;
  */
 final class WpHttpClient implements HttpClient
 {
-    public function get(string $url, array $headers, int $timeout, ?string $saveTo, int $maxBytes): HttpResponse
+    public function get(string $url, array $headers, int $timeout, ?string $saveTo, int $maxBytes): array
     {
         $args = [
             'method' => 'GET',
@@ -37,10 +37,10 @@ final class WpHttpClient implements HttpClient
             $normalised[strtolower((string) $name)] = is_array($value) ? (string) end($value) : (string) $value;
         }
 
-        return new HttpResponse(
-            (int) wp_remote_retrieve_response_code($response),
-            $normalised,
-            null === $saveTo ? (string) wp_remote_retrieve_body($response) : '',
-        );
+        return [
+            'status' => (int) wp_remote_retrieve_response_code($response),
+            'headers' => $normalised,
+            'body' => null === $saveTo ? (string) wp_remote_retrieve_body($response) : '',
+        ];
     }
 }

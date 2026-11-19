@@ -3,7 +3,7 @@
 /**
  * Plugin Name:       ProCoders Theme Release
  * Description:       Offers channel tags of private GitHub theme repositories as standard WordPress theme updates (staging or production), with webhook, rollback and freeze.
- * Version:           1.1.0
+ * Version:           1.2.0
  * Requires at least: 6.4
  * Requires PHP:      8.3
  * Author:            ProCoders
@@ -16,14 +16,26 @@ declare(strict_types=1);
 
 defined('ABSPATH') || exit;
 
+/**
+ * `admin_notices` when vendor/autoload.php is missing (broken upload): explains, never fatals.
+ */
+function pc_theme_release_missing_autoload_notice(): void
+{
+    if (! current_user_can('manage_options')) {
+        return;
+    }
+    echo '<div class="notice notice-error"><p>'
+        . esc_html__('ProCoders Theme Release is incomplete: vendor/autoload.php is missing. Upload the release ZIP again.', 'pc-theme-release')
+        . '</p></div>';
+}
+
 if (! is_readable(__DIR__ . '/vendor/autoload.php')) {
-    require_once __DIR__ . '/src/Lifecycle/MissingAutoloadNotice.php';
-    add_action('admin_notices', [\ProCoders\ThemeRelease\Lifecycle\MissingAutoloadNotice::class, 'render']);
+    add_action('admin_notices', 'pc_theme_release_missing_autoload_notice');
     return;
 }
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-register_activation_hook(__FILE__, [\ProCoders\ThemeRelease\Lifecycle\Lifecycle::class, 'onActivate']);
-register_deactivation_hook(__FILE__, [\ProCoders\ThemeRelease\Lifecycle\Lifecycle::class, 'onDeactivate']);
+register_activation_hook(__FILE__, [\ProCoders\ThemeRelease\Lifecycle\Module::class, 'onActivate']);
+register_deactivation_hook(__FILE__, [\ProCoders\ThemeRelease\Lifecycle\Module::class, 'onDeactivate']);
 add_action('plugins_loaded', [\ProCoders\ThemeRelease\Plugin::class, 'boot']);

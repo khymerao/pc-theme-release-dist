@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease\Theme;
 
-use ProCoders\ThemeRelease\Config\SettingsRepository;
+use ProCoders\ThemeRelease\Config\SiteContext;
 use ProCoders\ThemeRelease\GitHub\RepoName;
 use ProCoders\ThemeRelease\Support\Keys;
-use ProCoders\ThemeRelease\Support\OptionStore;
+use ProCoders\ThemeRelease\Support\Storage;
 use ProCoders\ThemeRelease\Support\ValidationError;
 
 /**
@@ -15,17 +15,16 @@ use ProCoders\ThemeRelease\Support\ValidationError;
  */
 final class MappingRepository
 {
-    public function __construct(private readonly OptionStore $options, private readonly ThemeDirectory $themes)
+    public function __construct(private readonly Storage $storage, private readonly Themes $themes)
     {
     }
 
     /** @return array<string, Mapping> */
     public function all(): array
     {
-        $raw = $this->options->get(Keys::THEMES, []);
         $mappings = [];
-        foreach (is_array($raw) ? $raw : [] as $stylesheet => $data) {
-            $mapping = is_array($data) ? $this->hydrate((string) $stylesheet, $data) : null;
+        foreach ($this->storage->getArray(Keys::THEMES) as $stylesheet => $data) {
+            $mapping = is_array($data) ? self::hydrate((string) $stylesheet, $data) : null;
             if (null !== $mapping) {
                 $mappings[$mapping->stylesheet] = $mapping;
             }
@@ -37,6 +36,12 @@ final class MappingRepository
     public function get(string $stylesheet): ?Mapping
     {
         return $this->all()[$stylesheet] ?? null;
+    }
+
+    /** @throws ValidationError "mapping_gone" when the theme is not managed (any more). */
+    public function require(string $stylesheet): Mapping
+    {
+        return $this->get($stylesheet) ?? throw new ValidationError('mapping_gone');
     }
 
     public function findByRepo(RepoName $repo): ?Mapping
@@ -68,15 +73,15 @@ final class MappingRepository
     {
         // Only a key of wp_get_themes(): wp_get_theme() also "finds" paths such as ../uploads.
         if (! self::isSafeStylesheet($stylesheet) || ! array_key_exists($stylesheet, $this->themes->installed())) {
-            throw new ValidationError('theme_not_installed', 'theme');
+            throw new ValidationError('theme_not_installed');
         }
         $name = RepoName::fromString($repo);
-        $branch = '' === trim($branchOverride) ? '' : SettingsRepository::validBranch($branchOverride, 'branch');
+        $branch = '' === trim($branchOverride) ? '' : SiteContext::validBranch($branchOverride);
         if (null !== $this->get($stylesheet)) {
-            throw new ValidationError('theme_already_mapped', 'theme');
+            throw new ValidationError('theme_already_mapped');
         }
         if (null !== $this->findByRepo($name)) {
-            throw new ValidationError('repo_already_mapped', 'repo');
+            throw new ValidationError('repo_already_mapped');
         }
         $mapping = new Mapping($stylesheet, $name, $branch, null, false);
         $this->save($mapping);
@@ -86,17 +91,17 @@ final class MappingRepository
 
     public function save(Mapping $mapping): void
     {
-        $raw = $this->options->get(Keys::THEMES, []);
-        $raw = is_array($raw) ? $raw : [];
+        $raw = $this->storage->getArray(Keys::THEMES);
         $raw[$mapping->stylesheet] = $mapping->toArray();
-        $this->options->set(Keys::THEMES, $raw, false);
+        $this->storage->set(Keys::THEMES, $raw, false);
     }
 
+    /** Stores what was installed; a rollback also freezes the theme, an update or switch leaves it unfrozen. */
     public function recordInstall(string $stylesheet, InstallRecord $record, bool $frozen): void
     {
         $mapping = $this->get($stylesheet);
         if (null !== $mapping) {
-            $this->save(new Mapping($mapping->stylesheet, $mapping->repo, $mapping->branchOverride, $record, $frozen));
+            $this->save($mapping->withRecord($record, $frozen));
         }
     }
 
@@ -104,7 +109,7 @@ final class MappingRepository
     {
         $mapping = $this->get($stylesheet);
         if (null !== $mapping) {
-            $this->save(new Mapping($mapping->stylesheet, $mapping->repo, $mapping->branchOverride, $mapping->record, $frozen));
+            $this->save($mapping->withFrozen($frozen));
         }
     }
 
@@ -116,19 +121,19 @@ final class MappingRepository
      */
     public function dropInvalid(): array
     {
-        $raw = $this->options->get(Keys::THEMES, []);
+        $raw = $this->storage->get(Keys::THEMES, []);
         if (! is_array($raw)) {
             return [];
         }
         $dropped = [];
         foreach ($raw as $stylesheet => $data) {
-            if (! is_array($data) || null === $this->hydrate((string) $stylesheet, $data)) {
+            if (! is_array($data) || null === self::hydrate((string) $stylesheet, $data)) {
                 $dropped[] = (string) $stylesheet;
                 unset($raw[$stylesheet]);
             }
         }
         if ([] !== $dropped) {
-            $this->options->set(Keys::THEMES, $raw, false);
+            $this->storage->set(Keys::THEMES, $raw, false);
         }
 
         return $dropped;
@@ -138,17 +143,17 @@ final class MappingRepository
     public function remove(string $stylesheet): ?Mapping
     {
         $mapping = $this->get($stylesheet);
-        $raw = $this->options->get(Keys::THEMES, []);
+        $raw = $this->storage->get(Keys::THEMES, []);
         if (is_array($raw) && isset($raw[$stylesheet])) {
             unset($raw[$stylesheet]);
-            $this->options->set(Keys::THEMES, $raw, false);
+            $this->storage->set(Keys::THEMES, $raw, false);
         }
 
         return $mapping;
     }
 
     /** @param array<mixed> $data */
-    private function hydrate(string $stylesheet, array $data): ?Mapping
+    private static function hydrate(string $stylesheet, array $data): ?Mapping
     {
         // The shape only: a mapping of a theme that is missing on disk right now is kept (status "missing").
         if (! self::isSafeStylesheet($stylesheet)) {

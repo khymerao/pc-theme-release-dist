@@ -21,16 +21,16 @@ enum Channel: string
     {
         return match ($this) {
             self::Staging => __('Staging', 'pc-theme-release'),
-            self::Production => __('Production', 'pc-theme-release'),
+            default => __('Production', 'pc-theme-release'),
         };
     }
 
     /** Lower-case name for use inside a sentence ("the staging channel"). */
-    public function name(): string
+    public function lowerLabel(): string
     {
         return match ($this) {
             self::Staging => __('staging', 'pc-theme-release'),
-            self::Production => __('production', 'pc-theme-release'),
+            default => __('production', 'pc-theme-release'),
         };
     }
 
@@ -38,7 +38,13 @@ enum Channel: string
     {
         return match ($this) {
             self::Staging => self::Production,
-            self::Production => self::Staging,
+            default => self::Staging,
         };
+    }
+
+    /** The one channel rule for tags: staging takes prereleases (a SemVer suffix), production plain versions. */
+    public function takesPrerelease(): bool
+    {
+        return self::Staging === $this;
     }
 }

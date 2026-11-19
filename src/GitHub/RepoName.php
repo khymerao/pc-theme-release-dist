@@ -23,7 +23,7 @@ final readonly class RepoName
         $value = trim($value);
         // No part may be "." or ".." or start with a dot (".git"), and no ".." anywhere (audit S12).
         if (1 !== preg_match('#^(' . self::PART . ')/(' . self::PART . ')$#', $value, $m) || '.' === $m[1][0] || '.' === $m[2][0] || str_contains($value, '..')) {
-            throw new ValidationError('invalid_repo', 'repo');
+            throw new ValidationError('invalid_repo');
         }
 
         return new self(strtolower($m[1]), strtolower($m[2]));

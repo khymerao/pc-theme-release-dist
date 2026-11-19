@@ -38,9 +38,4 @@ final readonly class WebhookResult
 
         return new self($status, ['error' => $message]);
     }
-
-    public function isError(): bool
-    {
-        return isset($this->body['error']);
-    }
 }

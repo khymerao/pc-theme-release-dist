@@ -27,6 +27,16 @@ final readonly class Mapping
         return '' !== $this->branchOverride ? $this->branchOverride : $settings->branchFor($channel);
     }
 
+    public function withRecord(InstallRecord $record, bool $frozen): self
+    {
+        return new self($this->stylesheet, $this->repo, $this->branchOverride, $record, $frozen);
+    }
+
+    public function withFrozen(bool $frozen): self
+    {
+        return new self($this->stylesheet, $this->repo, $this->branchOverride, $this->record, $frozen);
+    }
+
     /** @return array<string, mixed> */
     public function toArray(): array
     {

@@ -4,45 +4,37 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease\Security;
 
-use ProCoders\ThemeRelease\GitHub\TokenProvider;
 use ProCoders\ThemeRelease\Support\Environment;
 use ProCoders\ThemeRelease\Support\Keys;
-use ProCoders\ThemeRelease\Support\OptionStore;
+use ProCoders\ThemeRelease\Support\Storage;
 use ProCoders\ThemeRelease\Support\ValidationError;
 
 /**
  * The GitHub token and the webhook secret: wp-config constant first, else encrypted in a
  * non-autoloaded option. Plaintext only ever lives in memory for the current request.
  */
-final class Secrets implements TokenProvider
+final class Secrets
 {
-    public const int TOKEN_MIN = 20;
-    public const int TOKEN_MAX = 255;
-    public const int WEBHOOK_SECRET_MIN = 16;
-    public const int WEBHOOK_SECRET_MAX = 255;
     /** The "ends with …" hint is shown only for secrets at least this long (audit S9). */
     public const int HINT_MIN_LENGTH = 32;
     /** Value of Keys::SECRETS_FORMAT once every value is bound to its slot; legacy values are refused after. */
     private const int BOUND_FORMAT = 2;
-    private const string TOKEN_PATTERN = '/^[A-Za-z0-9_]+$/';
-    /** Example values from documentation that must never work as a secret. */
-    private const array PLACEHOLDERS = ['a-long-random-string', 'put your unique phrase here', 'your-webhook-secret', 'change-me-change-me'];
 
     public function __construct(
-        private readonly OptionStore $options,
-        private readonly Environment $environment,
+        private readonly Storage $storage,
+        private readonly Environment $env,
         private readonly SecretVault $vault,
     ) {
     }
 
     public function token(): ?string
     {
-        return $this->value(SecretKind::Token);
+        return $this->resolve(SecretKind::Token);
     }
 
     public function webhookSecret(): ?string
     {
-        return $this->value(SecretKind::WebhookSecret);
+        return $this->resolve(SecretKind::WebhookSecret);
     }
 
     public function source(SecretKind $kind): SecretSource
@@ -61,7 +53,7 @@ final class Secrets implements TokenProvider
     /** Last four characters for display ("ends with …abcd"), never more, and only for long secrets. */
     public function hint(SecretKind $kind): ?string
     {
-        $value = $this->value($kind);
+        $value = $this->resolve($kind);
         if (null === $value || self::HINT_MIN_LENGTH > strlen($value)) {
             return null;
         }
@@ -70,40 +62,13 @@ final class Secrets implements TokenProvider
     }
 
     /** @throws ValidationError */
-    public function saveToken(string $token): void
+    public function save(SecretKind $kind, string $value): void
     {
-        $token = trim($token);
-        if (! self::isValid(SecretKind::Token, $token)) {
-            throw new ValidationError('invalid_token', 'token');
+        $value = trim($value);
+        if (! $kind->isValid($value)) {
+            throw new ValidationError($kind->invalidReason());
         }
-        $this->store(SecretKind::Token, $token);
-    }
-
-    /**
-     * One rule for both sources (wp-config constant and stored value): token 20–255 of [A-Za-z0-9_];
-     * webhook secret 16–255 without control characters and not a documented placeholder.
-     */
-    public static function isValid(SecretKind $kind, string $value): bool
-    {
-        $length = strlen($value);
-        if (SecretKind::Token === $kind) {
-            return $length >= self::TOKEN_MIN && $length <= self::TOKEN_MAX && 1 === preg_match(self::TOKEN_PATTERN, $value);
-        }
-
-        return $length >= self::WEBHOOK_SECRET_MIN
-            && $length <= self::WEBHOOK_SECRET_MAX
-            && 1 !== preg_match('/[\x00-\x1F\x7F]/', $value)
-            && ! in_array(strtolower($value), self::PLACEHOLDERS, true);
-    }
-
-    /** @throws ValidationError */
-    public function saveWebhookSecret(string $secret): void
-    {
-        $secret = trim($secret);
-        if (! self::isValid(SecretKind::WebhookSecret, $secret)) {
-            throw new ValidationError('invalid_webhook_secret', 'webhook_secret');
-        }
-        $this->store(SecretKind::WebhookSecret, $secret);
+        $this->store($kind, $value);
     }
 
     /**
@@ -126,6 +91,22 @@ final class Secrets implements TokenProvider
         $this->write($stored);
     }
 
+    /** Drops every database-stored secret (constants are untouched). */
+    public function deleteStored(): void
+    {
+        $this->storage->delete(Keys::SECRETS);
+    }
+
+    /** A defined constant is authoritative: when it is invalid nothing works (no fallback to the database). */
+    private function resolve(SecretKind $kind): ?string
+    {
+        if ($this->constantDefined($kind)) {
+            return $this->constantValue($kind);
+        }
+
+        return $this->plain($kind);
+    }
+
     /**
      * The stored plaintext of a slot. A legacy (unbound) value is read once: every legacy slot is then
      * rewritten bound to its slot and the format is recorded, after which legacy values are refused.
@@ -140,7 +121,7 @@ final class Secrets implements TokenProvider
         if (SecretVault::isBound($value)) {
             return $this->vault->decrypt($value, $kind);
         }
-        if ($this->bound() || ! $this->vault->canEncrypt()) {
+        if ($this->bound() || ! $this->vault->saltsAreStrong()) {
             return null;
         }
         $this->migrate($stored);
@@ -170,32 +151,26 @@ final class Secrets implements TokenProvider
     /** Whether legacy (unbound) values were migrated, or never existed: then they are never read again. */
     private function bound(): bool
     {
-        return self::BOUND_FORMAT === $this->options->get(Keys::SECRETS_FORMAT);
+        return self::BOUND_FORMAT === $this->storage->get(Keys::SECRETS_FORMAT);
     }
 
     /** Its own option, so deleting both secrets does not reopen legacy reading (removed on uninstall only). */
     private function markBound(): void
     {
         if (! $this->bound()) {
-            $this->options->set(Keys::SECRETS_FORMAT, self::BOUND_FORMAT, false);
+            $this->storage->set(Keys::SECRETS_FORMAT, self::BOUND_FORMAT, false);
         }
-    }
-
-    /** Drops every database-stored secret (constants are untouched). */
-    public function deleteStored(): void
-    {
-        $this->options->delete(Keys::SECRETS);
     }
 
     /** @throws ValidationError */
     private function store(SecretKind $kind, string $plaintext): void
     {
         if ($this->constantDefined($kind)) {
-            throw new ValidationError('secret_in_constant', $kind->value);
+            throw new ValidationError('secret_in_constant');
         }
         $cipher = $this->vault->encrypt($plaintext, $kind);
         if (null === $cipher) {
-            throw new ValidationError('weak_salts', $kind->value);
+            throw new ValidationError('weak_salts');
         }
         $stored = $this->stored();
         if (! $this->bound()) {
@@ -208,18 +183,9 @@ final class Secrets implements TokenProvider
         $this->markBound();
     }
 
-    private function value(SecretKind $kind): ?string
-    {
-        // A defined constant is authoritative: when it is invalid nothing works (no fallback to the DB).
-        if ($this->constantDefined($kind)) {
-            return $this->constantValue($kind);
-        }
-        return $this->plain($kind);
-    }
-
     private function constantDefined(SecretKind $kind): bool
     {
-        $value = $this->environment->constant($kind->constantName());
+        $value = $this->env->constant($kind->constantName());
 
         return null !== $value && '' !== trim($value);
     }
@@ -227,26 +193,24 @@ final class Secrets implements TokenProvider
     /** The constant's value when it passes the same rule as a stored secret, else null. */
     private function constantValue(SecretKind $kind): ?string
     {
-        $value = trim((string) $this->environment->constant($kind->constantName()));
+        $value = trim((string) $this->env->constant($kind->constantName()));
 
-        return '' !== $value && self::isValid($kind, $value) ? $value : null;
+        return '' !== $value && $kind->isValid($value) ? $value : null;
     }
 
     /** @return array<string, mixed> */
     private function stored(): array
     {
-        $stored = $this->options->get(Keys::SECRETS, []);
-
-        return is_array($stored) ? $stored : [];
+        return $this->storage->getArray(Keys::SECRETS);
     }
 
     /** @param array<string, mixed> $stored */
     private function write(array $stored): void
     {
         if ([] === $stored) {
-            $this->options->delete(Keys::SECRETS);
+            $this->storage->delete(Keys::SECRETS);
             return;
         }
-        $this->options->set(Keys::SECRETS, $stored, false);
+        $this->storage->set(Keys::SECRETS, $stored, false);
     }
 }

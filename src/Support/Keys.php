@@ -22,9 +22,15 @@ final class Keys
     public const string COMPARE_PREFIX = 'pc_theme_release_cmp_';
     public const string CRON_HOOK = 'pc_theme_release_check';
     public const string LOCK = 'pc_theme_release';
-    public const string TEXT_DOMAIN = 'pc-theme-release';
     public const string PAGE_SLUG = 'pc-theme-release';
     public const string REST_NAMESPACE = 'pc-theme-release/v1';
+
+    /** Scalar entries of the STATE option, next to its "repos" map. */
+    public const string RATE_LIMITED_UNTIL = 'rate_limited_until';
+    public const string TOKEN_EXPIRES_AT = 'token_expires_at';
+    public const string LAST_CRON_AT = 'last_cron_at';
+    public const string LAST_WEBHOOK_AT = 'last_webhook_at';
+    public const string LAST_CHECK_AT = 'last_check_at';
 
     public const string CONST_CHANNEL = 'PC_THEME_RELEASE_CHANNEL';
     public const string CONST_TOKEN = 'PC_THEME_RELEASE_GITHUB_TOKEN';

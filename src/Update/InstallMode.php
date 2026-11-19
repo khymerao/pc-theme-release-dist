@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease\Update;
 
-enum InstallMode: string
+/**
+ * How a package of the plugin gets installed.
+ */
+enum InstallMode
 {
-    case Update = 'update';
-    case Rollback = 'rollback';
+    /** Core's own update (Dashboard → Updates, Themes screen): only the offered tag. */
+    case Update;
+    /** Plugin-screen install of an older channel tag: freezes the theme. */
+    case Rollback;
     /** Plugin-screen install of the newest channel tag over an out-of-channel tag: never freezes. */
-    case Switch = 'switch';
+    case Switch;
 }

@@ -115,7 +115,7 @@ enum MessageCode: string
             self::InstallRunning => __('Error: another update or rollback is running. Try again in a minute.', 'pc-theme-release'),
             self::FileModsDisallowed => __('Error: file modifications are disabled on this site (DISALLOW_FILE_MODS).', 'pc-theme-release'),
             self::HostChanged => __('Error: the site address changed. Confirm this site first (top of the screen).', 'pc-theme-release'),
-            self::Failed => __('Error: the action failed.', 'pc-theme-release'),
+            default => __('Error: the action failed.', 'pc-theme-release'),
         };
     }
 }
