@@ -44,6 +44,9 @@ final class Health
     {
         $items = $this->channelItems();
         $items[] = $this->tokenItem();
+        if ($this->secrets->tokenIsLegacyFormat()) {
+            $items[] = new HealthItem(HealthItem::RECOMMENDED, 'token_not_fine_grained', __('The GitHub token is not a fine-grained personal access token (github_pat_…). It keeps working, but replace it with a fine-grained token that can read only the theme repositories.', 'pc-theme-release'));
+        }
         $expires = $this->state->int(Keys::TOKEN_EXPIRES_AT);
         if ($expires > 0 && $expires - $this->env->now() <= self::TOKEN_WARN_SECONDS) {
             /* translators: %s: expiry date. */
@@ -79,7 +82,7 @@ final class Health
             $items[] = new HealthItem(HealthItem::RECOMMENDED, 'cron_alternate', __('ALTERNATE_WP_CRON is set: cron runs through redirects and may be unreliable.', 'pc-theme-release'));
         }
         if (false === wp_next_scheduled(Keys::CRON_HOOK)) {
-            $items[] = new HealthItem(HealthItem::CRITICAL, 'cron_missing', __('The 12-hour check is not scheduled. The plugin schedules it again on the next page load; if this message stays, something on this site removes WP-Cron events.', 'pc-theme-release'));
+            $items[] = new HealthItem(HealthItem::CRITICAL, 'cron_missing', __('The 12-hour check is not scheduled. The plugin schedules it again the next time an administrator opens the dashboard; if this message stays, something on this site removes WP-Cron events.', 'pc-theme-release'));
         }
         $last = $this->state->int(Keys::LAST_CRON_AT);
         if ($last > 0 && $now - $last > self::CRON_STALE_AFTER) {

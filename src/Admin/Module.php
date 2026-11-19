@@ -33,6 +33,10 @@ final class Module
         'webhook_secret_constant_invalid' => Tab::GitHub,
     ];
 
+    /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
+    private static ?\Closure $factory = null;
+    private static ?self $instance = null;
+
     private readonly Screen $screen;
     private readonly Actions $actions;
 
@@ -53,13 +57,53 @@ final class Module
         $this->actions = new Actions($site, $secrets, $mappings, $state, $offers, $checker, $log, $env);
     }
 
-    public function register(): void
+    /**
+     * Admin requests only; the screen and its services are built when a hook below fires.
+     *
+     * @param \Closure(): self $factory
+     */
+    public static function hook(\Closure $factory): void
     {
-        add_action('admin_menu', [$this, 'addMenu']);
-        add_action('admin_notices', [$this, 'renderNotices']);
+        self::$factory = $factory;
+        self::$instance = null;
+        add_action('admin_menu', [self::class, 'onMenu']);
+        add_action('admin_notices', [self::class, 'onNotices']);
         foreach (Action::adminPost() as $action) {
-            add_action('admin_post_' . $action->value, [$this->actions, 'dispatch']);
+            add_action('admin_post_' . $action->value, [self::class, 'onAdminPost']);
         }
+    }
+
+    /** The module, built on the first hook that needs it. */
+    private static function instance(): self
+    {
+        if (null === self::$instance) {
+            $factory = self::$factory ?? throw new \LogicException('Module not hooked.');
+            self::$instance = $factory();
+        }
+
+        return self::$instance;
+    }
+
+    /** Whether anything in this request needed the module (frontend requests never do). */
+    public static function built(): bool
+    {
+        return null !== self::$instance;
+    }
+
+    public static function onMenu(): void
+    {
+        self::instance()->addMenu();
+    }
+
+    public static function onNotices(): void
+    {
+        self::instance()->renderNotices();
+    }
+
+    /** `admin_post_{action}`. */
+    public static function onAdminPost(): void
+    {
+        self::instance()->actions->dispatch();
     }
 
     /**

@@ -10,9 +10,10 @@ use ProCoders\ThemeRelease\Support\Keys;
 use ProCoders\ThemeRelease\Support\Storage;
 
 /**
- * The three GitHub REST calls the plugin needs. The token goes only into the Authorization header
- * of requests to https://api.github.com/repos/{owner}/{repo}/…; redirects are followed by hand
- * to codeload.github.com without it. Also keeps GitHub's rate-limit and token-expiry answers.
+ * The GitHub REST calls the plugin needs. The token goes only into the Authorization header of requests
+ * to https://api.github.com; a renamed repository's permanent redirect to api.github.com/repositories/{id}
+ * is followed once with it, the zipball's redirect to codeload.github.com without it, and only for the
+ * mapped repository and the requested commit (audit N7). Also keeps GitHub's rate-limit and token-expiry answers.
  */
 final class GitHubClient
 {
@@ -31,6 +32,10 @@ final class GitHubClient
     private const int API_TIMEOUT = 15;
     private const int DOWNLOAD_TIMEOUT = 300;
     private const array REDIRECTS = [301, 302, 303, 307, 308];
+    /** Where GitHub moves a renamed or transferred repository's API paths (followed once, with the token). */
+    private const string MOVED_PATTERN = '#^https://api\.github\.com/repositories/[1-9][0-9]{0,19}(?:/[A-Za-z0-9._~%/-]*)?(?:\?[^\#\s]*)?$#';
+    /** The codeload path of a zipball: /{owner}/{repo}/legacy.zip/{sha} (or /zip/). */
+    private const string CODELOAD_PATH = '#^/([^/]+)/([^/]+)/(?:legacy\.)?zip/([0-9a-f]{40})$#';
 
     public function __construct(
         private readonly HttpClient $http,
@@ -83,6 +88,63 @@ final class GitHubClient
     }
 
     /**
+     * What GitHub says the repository is now (id, private, current name), by its mapped name.
+     *
+     * @throws GitHubError NotFound when the token cannot see it (or it is gone).
+     */
+    public function repository(RepoName $repo): Repository
+    {
+        $response = $this->apiGet($repo->apiPath());
+        $data = json_decode($response['body'], true);
+
+        return (is_array($data) ? Repository::fromApi($data) : null) ?? throw new GitHubError(GitHubErrorKind::BadResponse, $response['status']);
+    }
+
+    /**
+     * The commit SHA the branch points to now, or null when GitHub has no such branch (404).
+     *
+     * @throws GitHubError For any other failure.
+     */
+    public function branchHead(RepoName $repo, string $branch): ?string
+    {
+        // A ref is a path: "release/2.x" keeps its slash; each segment is encoded on its own.
+        $ref = implode('/', array_map('rawurlencode', explode('/', $branch)));
+        try {
+            $response = $this->apiGet($repo->apiPath() . '/git/ref/heads/' . $ref);
+        } catch (GitHubError $error) {
+            if (GitHubErrorKind::NotFound === $error->kind) {
+                return null;
+            }
+            throw $error;
+        }
+        $data = json_decode($response['body'], true);
+        $sha = is_array($data) && is_array($data['object'] ?? null) ? ($data['object']['sha'] ?? null) : null;
+        if (! is_string($sha) || 1 !== preg_match(self::SHA_PATTERN, $sha)) {
+            throw new GitHubError(GitHubErrorKind::BadResponse, $response['status']);
+        }
+
+        return $sha;
+    }
+
+    /**
+     * GitHub's compare status of $head against $base: ahead ($head comes after $base), identical,
+     * behind or diverged.
+     *
+     * @throws GitHubError NotFound when either commit is unknown to GitHub.
+     */
+    public function compareCommits(RepoName $repo, string $base, string $head): string
+    {
+        $response = $this->apiGet($repo->apiPath() . '/compare/' . rawurlencode($base) . '...' . rawurlencode($head) . '?per_page=1');
+        $data = json_decode($response['body'], true);
+        $status = is_array($data) ? ($data['status'] ?? null) : null;
+        if (! is_string($status)) {
+            throw new GitHubError(GitHubErrorKind::BadResponse, $response['status']);
+        }
+
+        return $status;
+    }
+
+    /**
      * Whether $sha is contained in $branch (compare status "behind" or "identical"), with the commit date
      * when it is; "branch_missing" when GitHub answers 404 (branch or commit missing).
      *
@@ -92,6 +154,7 @@ final class GitHubClient
      */
     public function compare(RepoName $repo, string $branch, string $sha): array
     {
+        // $branch is the branch head's SHA (Checker resolves it first, audit N5), never a bare ref name.
         $path = $repo->apiPath() . '/compare/' . rawurlencode($branch) . '...' . rawurlencode($sha);
         try {
             $response = $this->apiGet($path . '?per_page=1');
@@ -116,17 +179,24 @@ final class GitHubClient
     }
 
     /**
-     * Downloads the zipball of a commit into $target.
+     * Downloads the zipball of a commit into $target. The codeload redirect must be for the repository
+     * ($repo or one of $alsoNamed, its current name after a rename) and for exactly this commit.
+     *
+     * @param list<RepoName> $alsoNamed
      *
      * @throws GitHubError
      */
-    public function downloadZip(RepoName $repo, string $sha, string $target): void
+    public function downloadZip(RepoName $repo, string $sha, string $target, array $alsoNamed = []): void
     {
         if (1 !== preg_match(self::SHA_PATTERN, $sha)) {
             throw new GitHubError(GitHubErrorKind::BadResponse, 0);
         }
         // Streamed into $target: a direct 200 is complete; a redirect leaves an empty file we overwrite.
         $first = $this->authenticatedGet(self::packageUrl($repo, $sha), $target, self::DOWNLOAD_TIMEOUT);
+        $moved = self::movedTo($first);
+        if (null !== $moved) {
+            $first = $this->authenticatedGet($moved, $target, self::DOWNLOAD_TIMEOUT);
+        }
         if (200 === $first['status']) {
             return;
         }
@@ -134,7 +204,7 @@ final class GitHubClient
             $this->raiseFor($first);
         }
         $location = (string) ($first['headers']['location'] ?? '');
-        if (! self::isAllowedDownloadUrl($location)) {
+        if (! self::isAllowedDownloadUrl($location) || ! self::isCommitDownload($location, $sha, array_merge([$repo], $alsoNamed))) {
             throw new GitHubError(GitHubErrorKind::ForeignRedirect, $first['status']);
         }
         $second = $this->plainGet($location, $target, self::DOWNLOAD_TIMEOUT);
@@ -156,6 +226,40 @@ final class GitHubClient
     }
 
     /**
+     * The codeload path names one of $repos (case-insensitive) and exactly $sha; any query (GitHub's
+     * temporary token for private repositories) is allowed.
+     *
+     * @param list<RepoName> $repos
+     */
+    public static function isCommitDownload(string $url, string $sha, array $repos): bool
+    {
+        $path = (string) parse_url($url, PHP_URL_PATH);
+        if (1 !== preg_match(self::CODELOAD_PATH, $path, $m) || $m[3] !== $sha) {
+            return false;
+        }
+        $named = strtolower(rawurldecode($m[1]) . '/' . rawurldecode($m[2]));
+        foreach ($repos as $repo) {
+            if ($repo->full() === $named) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A renamed or transferred repository's redirect to api.github.com/repositories/{id}…, or null.
+     *
+     * @param array{status: int, headers: array<string, string>, body: string} $response
+     */
+    private static function movedTo(array $response): ?string
+    {
+        $location = (string) ($response['headers']['location'] ?? '');
+
+        return in_array($response['status'], [301, 302, 307, 308], true) && 1 === preg_match(self::MOVED_PATTERN, $location) ? $location : null;
+    }
+
+    /**
      * @return array{status: int, headers: array<string, string>, body: string}
      *
      * @throws GitHubError
@@ -163,6 +267,10 @@ final class GitHubClient
     private function apiGet(string $path): array
     {
         $response = $this->authenticatedGet(self::API_BASE . $path, null, self::API_TIMEOUT);
+        $moved = self::movedTo($response);
+        if (null !== $moved) {
+            $response = $this->authenticatedGet($moved, null, self::API_TIMEOUT);
+        }
         if (200 !== $response['status']) {
             $this->raiseFor($response);
         }

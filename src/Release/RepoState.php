@@ -18,11 +18,18 @@ final readonly class RepoState
     public const string COMPARE_BUDGET_EXHAUSTED = 'compare_budget_exhausted';
     /** Error code of a check whose channel branch does not exist on GitHub. */
     public const string BRANCH_MISSING = 'branch_missing';
+    /** Error codes of a repository that is not the one mapped (audit N1): nothing is offered or installed. */
+    public const string REPO_PUBLIC = 'repo_public';
+    public const string REPO_REPLACED = 'repo_replaced';
+    /** Ancestry statuses that let a newer tag be offered over the installed commit (audit N2). */
+    public const array DESCENDANT = ['ahead', 'identical'];
 
     /**
      * @param list<ChannelRelease>  $releases  Channel tags contained in the branch, newest first (≤ 20).
      * @param array<string, string> $tagShas   Every tag name GitHub listed (all channels) → commit SHA.
      * @param list<string>          $warnings  Warning codes.
+     * @param array{base?: string, head?: string, status?: string} $ancestry How the offerable tag's commit (head)
+     *        relates to the installed commit (base): GitHub's compare status, or "unknown".
      */
     public function __construct(
         public array $releases,
@@ -33,7 +40,24 @@ final readonly class RepoState
         public string $errorDetail,
         public array $warnings,
         public string $context = '',
+        public array $ancestry = [],
     ) {
+    }
+
+    /** The same state with the ancestry verdict for one (installed, offerable) pair. */
+    public function withAncestry(string $base, string $head, string $status): self
+    {
+        return new self($this->releases, $this->offerable, $this->tagShas, $this->checkedAt, $this->error, $this->errorDetail, $this->warnings, $this->context, ['base' => $base, 'head' => $head, 'status' => $status]);
+    }
+
+    /** The stored compare status for exactly this pair, or null when none was stored for it. */
+    public function ancestryFor(string $base, string $head): ?string
+    {
+        if (($this->ancestry['base'] ?? null) !== $base || ($this->ancestry['head'] ?? null) !== $head) {
+            return null;
+        }
+
+        return $this->ancestry['status'] ?? null;
     }
 
     public static function empty(): self
@@ -86,7 +110,7 @@ final readonly class RepoState
             'error_detail' => $this->errorDetail,
             'warnings' => $this->warnings,
             'context' => $this->context,
-        ];
+        ] + ([] === $this->ancestry ? [] : ['ancestry' => $this->ancestry]);
     }
 
     /** @param array<mixed> $data */
@@ -126,6 +150,17 @@ final readonly class RepoState
             is_string($data['error_detail'] ?? null) ? $data['error_detail'] : '',
             $warnings,
             is_string($data['context'] ?? null) ? $data['context'] : '',
+            self::ancestryFrom($data['ancestry'] ?? null),
         );
+    }
+
+    /** @return array{base?: string, head?: string, status?: string} */
+    private static function ancestryFrom(mixed $raw): array
+    {
+        if (! is_array($raw) || ! is_string($raw['base'] ?? null) || ! is_string($raw['head'] ?? null) || ! is_string($raw['status'] ?? null)) {
+            return [];
+        }
+
+        return ['base' => $raw['base'], 'head' => $raw['head'], 'status' => $raw['status']];
     }
 }

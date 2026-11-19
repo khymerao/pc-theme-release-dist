@@ -83,7 +83,8 @@ final class SiteContext
         $stored['staging_branch'] = self::validBranch($stagingBranch);
         $stored['production_branch'] = self::validBranch($productionBranch);
         $stored['host'] = $this->currentHost();
-        $this->storage->set(Keys::SETTINGS, $stored, true);
+        // Not autoloaded: only the plugin's own requests read it (footprint 4).
+        $this->storage->set(Keys::SETTINGS, $stored, false);
     }
 
     /** Rebinds the configuration to the current host (after the admin confirmed a host change). */
@@ -91,7 +92,8 @@ final class SiteContext
     {
         $stored = $this->storage->getArray(Keys::SETTINGS);
         $stored['host'] = $this->currentHost();
-        $this->storage->set(Keys::SETTINGS, $stored, true);
+        // Not autoloaded: only the plugin's own requests read it (footprint 4).
+        $this->storage->set(Keys::SETTINGS, $stored, false);
     }
 
     /**

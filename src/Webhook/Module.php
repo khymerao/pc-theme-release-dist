@@ -14,6 +14,7 @@ use ProCoders\ThemeRelease\Support\Environment;
 use ProCoders\ThemeRelease\Support\Keys;
 use ProCoders\ThemeRelease\Support\Storage;
 use ProCoders\ThemeRelease\Support\ValidationError;
+use ProCoders\ThemeRelease\Theme\MappingRepository;
 
 /**
  * POST /wp-json/pc-theme-release/v1/webhook, the only public endpoint of the plugin. The payload is
@@ -26,9 +27,15 @@ final class Module
     /** Valid deliveries per rolling window, site-wide (plan O5). */
     public const int RATE_LIMIT = 30;
     public const int RATE_WINDOW = 60;
+    /** Seconds after a webhook-triggered check of a repository during which later deliveries trigger none. */
+    public const int CHECK_INTERVAL = 60;
     /** Replay protection lasts this long. */
     public const int REPLAY_TTL = 86400;
     private const string UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/';
+
+    /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
+    private static ?\Closure $factory = null;
+    private static ?self $instance = null;
 
     public function __construct(
         private readonly SiteContext $site,
@@ -38,22 +45,57 @@ final class Module
         private readonly StatusLog $log,
         private readonly Storage $storage,
         private readonly Environment $env,
+        private readonly MappingRepository $mappings,
     ) {
     }
 
-    public function register(): void
+    /**
+     * The route is registered on `rest_api_init`; the module is built only when a delivery arrives.
+     *
+     * @param \Closure(): self $factory
+     */
+    public static function hook(\Closure $factory): void
     {
-        add_action('rest_api_init', [$this, 'registerRoute']);
+        self::$factory = $factory;
+        self::$instance = null;
+        add_action('rest_api_init', [self::class, 'registerRoute']);
+    }
+
+    /** The module, built on the first hook that needs it. */
+    private static function instance(): self
+    {
+        if (null === self::$instance) {
+            $factory = self::$factory ?? throw new \LogicException('Module not hooked.');
+            self::$instance = $factory();
+        }
+
+        return self::$instance;
+    }
+
+    /** Whether anything in this request needed the module (frontend requests never do). */
+    public static function built(): bool
+    {
+        return null !== self::$instance;
     }
 
     /** `rest_api_init`. */
-    public function registerRoute(): void
+    public static function registerRoute(): void
     {
         register_rest_route(Keys::REST_NAMESPACE, '/webhook', [
             'methods' => 'POST',
-            'callback' => [$this, 'handle'],
-            'permission_callback' => [$this, 'permission'],
+            'callback' => [self::class, 'onDelivery'],
+            'permission_callback' => [self::class, 'onPermission'],
         ]);
+    }
+
+    public static function onPermission(\WP_REST_Request $request): bool|\WP_Error
+    {
+        return self::instance()->permission($request);
+    }
+
+    public static function onDelivery(\WP_REST_Request $request): \WP_REST_Response
+    {
+        return self::instance()->handle($request);
     }
 
     public function permission(\WP_REST_Request $request): bool|\WP_Error
@@ -153,17 +195,41 @@ final class Module
         if (! self::isTagEvent($event, $payload)) {
             return WebhookResult::ignored();
         }
-        $repo = self::repoFrom($payload);
-        if (null === $repo || ! $this->checker->checkRepo($repo, 'webhook')) {
+        $repo = $this->repoFrom($payload);
+        if (null === $repo) {
             return WebhookResult::ignored();
         }
+        // At most one webhook-triggered check per repository per CHECK_INTERVAL (review F1): a burst of
+        // signed tag events is accepted, but cannot spend the token's hourly GitHub quota.
+        if (null !== $this->storage->transient(self::checkKey($repo))) {
+            return WebhookResult::ok();
+        }
+        if (! $this->checker->checkRepo($repo, 'webhook')) {
+            return WebhookResult::ignored();
+        }
+        $this->storage->setTransient(self::checkKey($repo), 1, self::CHECK_INTERVAL);
 
         return WebhookResult::ok();
     }
 
-    /** @param array<mixed> $payload */
-    private static function repoFrom(array $payload): ?RepoName
+    private static function checkKey(RepoName $repo): string
     {
+        return Keys::DELIVERY_PREFIX . 'chk_' . md5($repo->full());
+    }
+
+    /**
+     * The mapped repository the delivery is about: by its GitHub id first (a renamed repository keeps
+     * its id), else by name. The plugin re-reads everything from the API itself.
+     *
+     * @param array<mixed> $payload
+     */
+    private function repoFrom(array $payload): ?RepoName
+    {
+        $id = is_array($payload['repository'] ?? null) ? ($payload['repository']['id'] ?? null) : null;
+        $byId = is_int($id) ? $this->mappings->findByRepoId($id) : null;
+        if (null !== $byId) {
+            return $byId->repo;
+        }
         $full = is_array($payload['repository'] ?? null) ? ($payload['repository']['full_name'] ?? null) : null;
         try {
             return RepoName::fromString(is_string($full) ? $full : '');

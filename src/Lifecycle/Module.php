@@ -17,18 +17,68 @@ use ProCoders\ThemeRelease\Support\Storage;
  */
 final class Module
 {
+    /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
+    private static ?\Closure $factory = null;
+    private static ?self $instance = null;
+
     public function __construct(private readonly Checker $checker)
     {
     }
 
     /**
-     * Schedules the 12-hour check on every request where it is missing, so it does not depend on the
-     * activation hook having fired (symlinked installs, activation before vendor/ existed), and runs it.
+     * Schedules the 12-hour check on admin requests where it is missing, so it does not depend on the
+     * activation hook having fired (symlinked installs, activation before vendor/ existed) and costs a
+     * frontend request nothing (footprint 2), and runs it. The checker is built only when the event fires.
+     *
+     * @param \Closure(): self $factory
      */
-    public function register(): void
+    public static function hook(\Closure $factory): void
     {
-        add_action('init', [self::class, 'schedule']);
-        add_action(Keys::CRON_HOOK, [$this->checker, 'runScheduled']);
+        self::$factory = $factory;
+        self::$instance = null;
+        add_action('admin_init', [self::class, 'heal']);
+        add_action(Keys::CRON_HOOK, [self::class, 'onScheduledCheck']);
+    }
+
+    /** The module, built on the first hook that needs it. */
+    private static function instance(): self
+    {
+        if (null === self::$instance) {
+            $factory = self::$factory ?? throw new \LogicException('Module not hooked.');
+            self::$instance = $factory();
+        }
+
+        return self::$instance;
+    }
+
+    /** Whether anything in this request needed the module (frontend requests never do). */
+    public static function built(): bool
+    {
+        return null !== self::$instance;
+    }
+
+    /** The scheduled check (WP-Cron, ALTERNATE_WP_CRON, `wp cron event run`). */
+    public static function onScheduledCheck(): void
+    {
+        self::instance()->checker->runScheduled();
+    }
+
+    /** `admin_init`: the missing schedule, and the settings row of older versions moved out of autoload. */
+    public static function heal(): void
+    {
+        self::schedule();
+        self::stopAutoloadingSettings();
+    }
+
+    /**
+     * Older versions saved the settings autoloaded, so every request loaded them. Switched off once: a row
+     * that is not autoloaded is not in core's cached alloptions, so later calls do no query (footprint 4).
+     */
+    public static function stopAutoloadingSettings(): void
+    {
+        if (array_key_exists(Keys::SETTINGS, wp_load_alloptions())) {
+            wp_set_option_autoload(Keys::SETTINGS, false);
+        }
     }
 
     public static function inert(): bool
@@ -50,6 +100,7 @@ final class Module
             return;
         }
         self::schedule();
+        self::stopAutoloadingSettings();
     }
 
     /** Unschedules the check and withdraws the plugin's entries from core's update list (audit S3). */

@@ -50,6 +50,14 @@ final class Secrets
         return null === $this->plain($kind) ? SecretSource::Undecryptable : SecretSource::Database;
     }
 
+    /** A usable token (stored or wp-config) that is not a fine-grained one: it works, Health asks to replace it. */
+    public function tokenIsLegacyFormat(): bool
+    {
+        $token = $this->token();
+
+        return null !== $token && ! str_starts_with($token, SecretKind::FINE_GRAINED_PREFIX);
+    }
+
     /** Last four characters for display ("ends with …abcd"), never more, and only for long secrets. */
     public function hint(SecretKind $kind): ?string
     {
@@ -65,7 +73,7 @@ final class Secrets
     public function save(SecretKind $kind, string $value): void
     {
         $value = trim($value);
-        if (! $kind->isValid($value)) {
+        if (! $kind->isValidNew($value)) {
             throw new ValidationError($kind->invalidReason());
         }
         $this->store($kind, $value);

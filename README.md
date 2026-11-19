@@ -10,9 +10,9 @@ Themes from private GitHub repos as normal WordPress updates. WordPress 6.4+, PH
 2. **GitHub** -> token. GitHub: *Settings -> Developer settings -> Personal access tokens -> Fine-grained tokens ->
    Generate new token*.
    Owner: the organisation. Repositories: only this site's themes. Permissions: **Contents: Read-only**,
-   **Metadata: Read-only**. One token per site.
+   **Metadata: Read-only**. One token per site. Only fine-grained tokens (`github_pat_…`) are accepted.
 3. **GitHub** -> **Generate a new webhook secret**. Shown once.
-4. **Themes** -> **Add theme** (`owner/repo`), then **Record installed tag**.
+4. **Themes** -> **Add theme** (`owner/repo`), then **Record installed tag**. Public repositories are refused.
 5. Each theme repo: *Settings -> Webhooks -> Add webhook*. URL from the **GitHub** tab, content type
    **application/json**, the secret, events **Branch or tag creation** and **Pushes**.
 

@@ -140,7 +140,7 @@ final class InstallFlow
         }
         $mapping = $this->mappings->get($stylesheet);
         try {
-            $this->installer->expect($stylesheet, $target->sha, $mode);
+            $this->installer->expect($stylesheet, $target->sha, $mode, $target->tag);
             $this->pendingEntry = null === $mapping
                 ? null
                 : UpdateTransient::entry($stylesheet, $target->versionLabel(), '', GitHubClient::packageUrl($mapping->repo, $target->sha), false);

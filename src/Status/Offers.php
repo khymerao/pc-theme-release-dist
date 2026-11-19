@@ -67,6 +67,10 @@ final class Offers
         $outOfChannel = self::outOfChannel($record, $installed, $channel, $state);
         $available = ! $missing && ! $conflict && ! $mapping->frozen;
         [$offer, $switchTarget] = $available ? self::offerFor($state->offerable, $record, $installed, $outOfChannel) : [null, null];
+        $ancestry = null === $offer || null !== $switchTarget ? null : self::ancestryRefusal($state, $record, $offer);
+        if (null !== $ancestry) {
+            $offer = null;
+        }
 
         return new ThemeStatus(
             $mapping,
@@ -84,7 +88,29 @@ final class Offers
             $switchTarget,
             $channel,
             null === $channel ? '' : $mapping->branch($this->site->settings(), $channel),
+            $ancestry,
         );
+    }
+
+    /**
+     * Why a newer tag is not offered over the recorded commit (audit N2): GitHub said its commit does not
+     * come after the installed one, or that was not confirmed for exactly this pair (fail closed). Null: offer
+     * it. No record (version from style.css), the same commit, and the switch to the site's channel are not
+     * judged; explicit rollbacks never pass here.
+     *
+     * @return 'not_newer'|'unconfirmed'|null
+     */
+    private static function ancestryRefusal(RepoState $state, ?InstallRecord $record, ChannelRelease $offer): ?string
+    {
+        if (null === $record || $record->sha === $offer->sha) {
+            return null;
+        }
+        $status = $state->ancestryFor($record->sha, $offer->sha);
+        if (null === $status || 'unknown' === $status) {
+            return ThemeStatus::ANCESTRY_UNCONFIRMED;
+        }
+
+        return in_array($status, RepoState::DESCENDANT, true) ? null : ThemeStatus::ANCESTRY_NOT_NEWER;
     }
 
     /** The recorded tag, else the style.css version; empty when the theme is missing and nothing is recorded. */

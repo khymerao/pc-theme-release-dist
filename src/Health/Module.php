@@ -19,13 +19,46 @@ final class Module
         'pc_theme_release_repos' => 'reposTest',
     ];
 
+    /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
+    private static ?\Closure $factory = null;
+    private static ?self $instance = null;
+
     public function __construct(private readonly Health $health)
     {
     }
 
-    public function register(): void
+    /**
+     * Built only when Site Health asks for its tests.
+     *
+     * @param \Closure(): self $factory
+     */
+    public static function hook(\Closure $factory): void
     {
-        add_filter('site_status_tests', [$this, 'addTests']);
+        self::$factory = $factory;
+        self::$instance = null;
+        add_filter('site_status_tests', [self::class, 'onTests']);
+    }
+
+    /** The module, built on the first hook that needs it. */
+    private static function instance(): self
+    {
+        if (null === self::$instance) {
+            $factory = self::$factory ?? throw new \LogicException('Module not hooked.');
+            self::$instance = $factory();
+        }
+
+        return self::$instance;
+    }
+
+    /** Whether anything in this request needed the module (frontend requests never do). */
+    public static function built(): bool
+    {
+        return null !== self::$instance;
+    }
+
+    public static function onTests(mixed $tests): mixed
+    {
+        return is_array($tests) ? self::instance()->addTests($tests) : $tests;
     }
 
     /**

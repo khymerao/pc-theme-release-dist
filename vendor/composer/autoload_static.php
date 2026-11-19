@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInit2cc62b884245c36fb2a092f954039a9d
+class ComposerStaticInit3cd76e029c906d757e65ad50e7f239e9
 {
     public static $prefixLengthsPsr4 = array (
         'P' =>
@@ -40,7 +40,10 @@ class ComposerStaticInit2cc62b884245c36fb2a092f954039a9d
         'ProCoders\\ThemeRelease\\GitHub\\GitHubErrorKind' => __DIR__ . '/../..' . '/src/GitHub/GitHubErrorKind.php',
         'ProCoders\\ThemeRelease\\GitHub\\HttpClient' => __DIR__ . '/../..' . '/src/GitHub/HttpClient.php',
         'ProCoders\\ThemeRelease\\GitHub\\RepoName' => __DIR__ . '/../..' . '/src/GitHub/RepoName.php',
+        'ProCoders\\ThemeRelease\\GitHub\\Repository' => __DIR__ . '/../..' . '/src/GitHub/Repository.php',
+        'ProCoders\\ThemeRelease\\GitHub\\TlsPolicy' => __DIR__ . '/../..' . '/src/GitHub/TlsPolicy.php',
         'ProCoders\\ThemeRelease\\GitHub\\WpHttpClient' => __DIR__ . '/../..' . '/src/GitHub/WpHttpClient.php',
+        'ProCoders\\ThemeRelease\\GitHub\\Zipball' => __DIR__ . '/../..' . '/src/GitHub/Zipball.php',
         'ProCoders\\ThemeRelease\\Health\\Module' => __DIR__ . '/../..' . '/src/Health/Module.php',
         'ProCoders\\ThemeRelease\\Lifecycle\\Module' => __DIR__ . '/../..' . '/src/Lifecycle/Module.php',
         'ProCoders\\ThemeRelease\\Plugin' => __DIR__ . '/../..' . '/src/Plugin.php',
@@ -55,6 +58,7 @@ class ComposerStaticInit2cc62b884245c36fb2a092f954039a9d
         'ProCoders\\ThemeRelease\\Security\\SecretSource' => __DIR__ . '/../..' . '/src/Security/SecretSource.php',
         'ProCoders\\ThemeRelease\\Security\\SecretVault' => __DIR__ . '/../..' . '/src/Security/SecretVault.php',
         'ProCoders\\ThemeRelease\\Security\\Secrets' => __DIR__ . '/../..' . '/src/Security/Secrets.php',
+        'ProCoders\\ThemeRelease\\Services' => __DIR__ . '/../..' . '/src/Services.php',
         'ProCoders\\ThemeRelease\\Status\\Health' => __DIR__ . '/../..' . '/src/Status/Health.php',
         'ProCoders\\ThemeRelease\\Status\\HealthItem' => __DIR__ . '/../..' . '/src/Status/HealthItem.php',
         'ProCoders\\ThemeRelease\\Status\\Offers' => __DIR__ . '/../..' . '/src/Status/Offers.php',
@@ -80,9 +84,9 @@ class ComposerStaticInit2cc62b884245c36fb2a092f954039a9d
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInit2cc62b884245c36fb2a092f954039a9d::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInit2cc62b884245c36fb2a092f954039a9d::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInit2cc62b884245c36fb2a092f954039a9d::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit3cd76e029c906d757e65ad50e7f239e9::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit3cd76e029c906d757e65ad50e7f239e9::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit3cd76e029c906d757e65ad50e7f239e9::$classMap;
 
         }, null, ClassLoader::class);
     }

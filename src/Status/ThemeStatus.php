@@ -22,10 +22,15 @@ final readonly class ThemeStatus
     public const string OUT_OF_CHANNEL_SUFFIX = 'suffix';
     /** Right suffix, but the check found the installed tag's commit outside the channel branch. */
     public const string OUT_OF_CHANNEL_BRANCH = 'branch';
+    /** The newest tag's commit does not come after the installed commit (audit N2). */
+    public const string ANCESTRY_NOT_NEWER = 'not_newer';
+    /** GitHub did not confirm that it does (compare failed, or not asked since the installed tag changed). */
+    public const string ANCESTRY_UNCONFIRMED = 'unconfirmed';
 
     /**
      * @param list<ChannelRelease>  $rollbackTargets
      * @param 'suffix'|'branch'|null $outOfChannel    Why the installed tag is not a tag of the site's channel.
+     * @param 'not_newer'|'unconfirmed'|null $ancestry Why the newest tag is not offered over the installed commit.
      */
     public function __construct(
         public Mapping $mapping,
@@ -43,6 +48,7 @@ final readonly class ThemeStatus
         public ?ChannelRelease $switchTarget,
         public ?Channel $channel,
         public string $branch,
+        public ?string $ancestry = null,
     ) {
     }
 
@@ -108,7 +114,11 @@ final readonly class ThemeStatus
             return self::tagDeletedText();
         }
 
-        return $this->nothingConfirmed() ? self::nothingConfirmedText() : null;
+        if ($this->nothingConfirmed()) {
+            return self::nothingConfirmedText();
+        }
+
+        return self::ANCESTRY_NOT_NEWER === $this->ancestry ? self::notNewerText() : null;
     }
 
     /** Why the last check of this mapping failed, or null when it did not. */
@@ -136,7 +146,11 @@ final readonly class ThemeStatus
             return $error;
         }
 
-        return $this->unconfirmed() ? self::warningText(RepoState::CONTAINMENT_UNKNOWN) : null;
+        if ($this->unconfirmed()) {
+            return self::warningText(RepoState::CONTAINMENT_UNKNOWN);
+        }
+
+        return self::ANCESTRY_UNCONFIRMED === $this->ancestry ? self::ancestryUnconfirmedText() : null;
     }
 
     /**
@@ -165,6 +179,14 @@ final readonly class ThemeStatus
      */
     public static function errorText(string $code, string $detail, string $repo, int $rateLimitedUntil = 0): string
     {
+        if (RepoState::REPO_PUBLIC === $code) {
+            /* translators: %s: owner/repo. */
+            return sprintf(__('Error: repository %s is public. Only private repositories are accepted, so nothing is offered or installed.', 'pc-theme-release'), $repo);
+        }
+        if (RepoState::REPO_REPLACED === $code) {
+            /* translators: %s: owner/repo. */
+            return sprintf(__('Error: repository %s on GitHub is not the one that was added (its GitHub id changed: deleted and created again?). Nothing is offered or installed. If this is intended, remove the theme here and add it again.', 'pc-theme-release'), $repo);
+        }
         if (RepoState::BRANCH_MISSING === $code) {
             /* translators: %s: branch name. */
             return sprintf(__('Error: branch %s not found on GitHub. Nothing is offered.', 'pc-theme-release'), $detail);
@@ -232,7 +254,8 @@ final readonly class ThemeStatus
             && ! $this->unconfirmed()
             && ! $this->mapping->frozen
             && null === $this->outOfChannelText()
-            && null === $this->unresolved();
+            && null === $this->unresolved()
+            && null === $this->ancestry;
     }
 
     /** @return list<string> The check's error and warnings. */
@@ -245,6 +268,11 @@ final readonly class ThemeStatus
         }
         foreach ($this->state->warnings as $warning) {
             $lines[] = self::warningText($warning);
+        }
+        if (self::ANCESTRY_NOT_NEWER === $this->ancestry) {
+            $lines[] = self::notNewerText();
+        } elseif (self::ANCESTRY_UNCONFIRMED === $this->ancestry) {
+            $lines[] = self::ancestryUnconfirmedText();
         }
 
         return $lines;
@@ -283,6 +311,16 @@ final readonly class ThemeStatus
     private static function nothingConfirmedText(): string
     {
         return __('No tag of this channel could be confirmed in the branch (compare limit reached), so nothing is offered.', 'pc-theme-release');
+    }
+
+    private static function notNewerText(): string
+    {
+        return __('The newest tag is not newer than the installed commit.', 'pc-theme-release');
+    }
+
+    private static function ancestryUnconfirmedText(): string
+    {
+        return __('Warning: GitHub could not confirm that the newest tag comes after the installed commit. Nothing is offered until the next check.', 'pc-theme-release');
     }
 
     private static function tagDeletedText(): string

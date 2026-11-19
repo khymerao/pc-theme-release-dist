@@ -15,7 +15,8 @@ final class WpHttpClient implements HttpClient
         $args = [
             'method' => 'GET',
             'timeout' => $timeout,
-            // Explicit: the default is filterable (http_request_args), TLS verification is not (audit S11).
+            // Explicit, but other code can still switch it off through `http_request_args` or
+            // `https_ssl_verify`: GitHub\TlsPolicy forces it back on for the GitHub hosts, filtered last (audit N9).
             'sslverify' => true,
             'limit_response_size' => $maxBytes + 1,
             'redirection' => 0,

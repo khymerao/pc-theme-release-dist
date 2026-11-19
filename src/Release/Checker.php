@@ -8,10 +8,13 @@ use ProCoders\ThemeRelease\Config\Channel;
 use ProCoders\ThemeRelease\Config\SiteContext;
 use ProCoders\ThemeRelease\GitHub\GitHubClient;
 use ProCoders\ThemeRelease\GitHub\GitHubError;
+use ProCoders\ThemeRelease\GitHub\GitHubErrorKind;
+use ProCoders\ThemeRelease\GitHub\Repository;
 use ProCoders\ThemeRelease\GitHub\RepoName;
 use ProCoders\ThemeRelease\Support\Environment;
 use ProCoders\ThemeRelease\Support\Keys;
 use ProCoders\ThemeRelease\Support\Storage;
+use ProCoders\ThemeRelease\Support\ValidationError;
 use ProCoders\ThemeRelease\Theme\Mapping;
 use ProCoders\ThemeRelease\Theme\MappingRepository;
 
@@ -79,6 +82,104 @@ final class Checker
         $this->checkAll('cron');
     }
 
+    /**
+     * The id of a repository about to be mapped (audit N1), or null when GitHub cannot tell now (the next
+     * check stores it, trust on first use).
+     *
+     * @throws ValidationError "repo_public" for a public repository.
+     */
+    public function idForNewMapping(RepoName $repo): ?int
+    {
+        try {
+            $repository = $this->github->repository($repo);
+        } catch (GitHubError) {
+            return null;
+        }
+        if (! $repository->private) {
+            throw new ValidationError(RepoState::REPO_PUBLIC);
+        }
+
+        return $repository->id;
+    }
+
+    /**
+     * Whether GitHub still has the mapped repository under its stored id, private (audit N1). Stores the id
+     * when none is stored yet (trust on first use, same public refusal). Null refusal: it is the mapped one.
+     *
+     * @return array{0: string|null, 1: Repository|null} refusal code (RepoState::REPO_*, or NotFound's code), what GitHub said
+     *
+     * @throws GitHubError For failures other than "not found".
+     */
+    public function identity(Mapping $mapping): array
+    {
+        try {
+            $repository = $this->github->repository($mapping->repo);
+        } catch (GitHubError $error) {
+            if (GitHubErrorKind::NotFound === $error->kind) {
+                return [GitHubErrorKind::NotFound->value, null];
+            }
+            throw $error;
+        }
+        if (null !== $mapping->repoId && $repository->id !== $mapping->repoId) {
+            return [RepoState::REPO_REPLACED, $repository];
+        }
+        if (! $repository->private) {
+            return [RepoState::REPO_PUBLIC, $repository];
+        }
+        if (null === $mapping->repoId) {
+            $this->mappings->setRepoId($mapping->stylesheet, $repository->id);
+        }
+
+        return [null, $repository];
+    }
+
+    /**
+     * Right before a download (audit N3): the repository is still the mapped one, and the commit is in the
+     * channel branch as GitHub resolves it now. Nothing cached is used.
+     *
+     * @return array{refusal: string|null, names: list<RepoName>} refusal: RepoState::REPO_* / NotFound's code,
+     *         RepoState::BRANCH_MISSING or "not_in_branch"; names: the repository's current name too (after a rename).
+     *
+     * @throws GitHubError When GitHub could not answer (rate limit included).
+     */
+    public function confirmForInstall(Mapping $mapping, string $sha): array
+    {
+        [$refusal, $repository] = $this->identity($mapping);
+        $names = null === $repository?->name || $repository->name->equals($mapping->repo) ? [] : [$repository->name];
+        $channel = $this->site->channel();
+        if (null !== $refusal || null === $channel) {
+            return ['refusal' => $refusal ?? 'not_in_branch', 'names' => $names];
+        }
+        $head = $this->github->branchHead($mapping->repo, $mapping->branch($this->site->settings(), $channel));
+        if (null === $head) {
+            return ['refusal' => RepoState::BRANCH_MISSING, 'names' => $names];
+        }
+        $contained = 'contained' === $this->github->compare($mapping->repo, $head, $sha)['status'];
+
+        return ['refusal' => $contained ? null : 'not_in_branch', 'names' => $names];
+    }
+
+    /**
+     * Refreshes the ancestry verdict (audit N2) after the installed record changed without a check (Record
+     * installed tag, Unfreeze), so the stored offer stays true. One compare at most; nothing when not operational.
+     */
+    public function confirmAncestry(string $stylesheet): void
+    {
+        $mapping = $this->mappings->get($stylesheet);
+        $channel = $this->site->channel();
+        if (null === $mapping || null === $channel || ! $this->site->isOperational()) {
+            return;
+        }
+        $state = $this->state->repo($mapping->repo);
+        if ($state->context !== RepoState::contextFor($channel, $mapping->branch($this->site->settings(), $channel))) {
+            return;
+        }
+        $verdict = $this->withAncestry($mapping, $state);
+        if ($verdict !== $state) {
+            $this->state->saveRepo($mapping->repo, $verdict);
+        }
+    }
+
     private function checkMapping(Mapping $mapping, string $trigger): void
     {
         $channel = $this->site->channel();
@@ -87,7 +188,15 @@ final class Checker
         }
         $previous = $this->state->repo($mapping->repo);
         $branch = $mapping->branch($this->site->settings(), $channel);
+        $context = RepoState::contextFor($channel, $branch);
         try {
+            [$refusal] = $this->identity($mapping);
+            if (null !== $refusal) {
+                // Not the mapped repository: nothing it listed may be offered, rolled back to or installed.
+                $this->log->add($trigger . '_failed', $mapping->repo->full(), '', GitHubErrorKind::NotFound->value === $refusal ? 404 : 0);
+                $this->state->saveRepo($mapping->repo, new RepoState([], null, [], $this->env->now(), $refusal, $mapping->repo->full(), [], $context));
+                return;
+            }
             $state = $this->resolve($mapping->repo, $channel, $branch, $this->github->tags($mapping->repo));
         } catch (GitHubError $error) {
             $failed = $this->failed($previous, $channel, $branch, $error, $mapping->repo);
@@ -95,10 +204,36 @@ final class Checker
             $this->state->saveRepo($mapping->repo, $failed);
             return;
         }
+        $state = $this->withAncestry($this->mappings->get($mapping->stylesheet) ?? $mapping, $state);
         $this->state->saveRepo($mapping->repo, $state);
         // A round whose newest tag could not be confirmed is reported as failed by Check now; log it apart.
         $event = $state->hasWarning(RepoState::CONTAINMENT_UNKNOWN) ? '_unconfirmed' : '_checked';
         $this->log->add($trigger . $event, $mapping->repo->full(), null === $state->offerable ? '' : $state->offerable->tag);
+    }
+
+    /**
+     * The state with the verdict whether the offerable tag's commit comes after the installed one (audit N2).
+     * Asked only when it decides an offer: a record exists, the commits differ, and the tag is newer than
+     * the recorded one. "unknown" when GitHub could not answer (never offered until the next check).
+     */
+    private function withAncestry(Mapping $mapping, RepoState $state): RepoState
+    {
+        $record = $mapping->record;
+        $candidate = $state->offerable;
+        if (null === $record || null === $candidate || $record->sha === $candidate->sha || null !== $state->ancestryFor($record->sha, $candidate->sha)) {
+            return $state;
+        }
+        $installed = SemVer::parse($record->tag);
+        if (null !== $installed && $candidate->version()->compare($installed) <= 0) {
+            return $state;
+        }
+        try {
+            $status = $this->github->compareCommits($mapping->repo, $record->sha, $candidate->sha);
+        } catch (GitHubError) {
+            $status = 'unknown';
+        }
+
+        return $state->withAncestry($record->sha, $candidate->sha, $status);
     }
 
     /**
@@ -123,7 +258,8 @@ final class Checker
     }
 
     /**
-     * The channel releases of a repository: newest first, at most LIST_SIZE, each confirmed in the branch.
+     * The channel releases of a repository: newest first, at most LIST_SIZE, each confirmed in the branch as
+     * its head resolves now (audit N5: the head is resolved once, every compare is against that SHA).
      *
      * @param array{tags: list<array{name: string, sha: string}>, truncated: bool} $tags
      *
@@ -138,15 +274,20 @@ final class Checker
             $tagShas[$tag['name']] ??= $tag['sha'];
         }
         $warnings = $tags['truncated'] ? [RepoState::TAGS_TRUNCATED] : [];
+        $candidates = self::channelTags($tags['tags'], $channel);
+        $head = [] === $candidates ? '' : $this->github->branchHead($repo, $branch);
+        if (null === $head) {
+            return new RepoState([], null, $tagShas, $this->env->now(), RepoState::BRANCH_MISSING, $branch, $warnings, $context);
+        }
 
         $releases = [];
         $unknownAboveBest = false;
         $budget = self::COMPARE_BUDGET;
-        foreach (self::channelTags($tags['tags'], $channel) as $tag) {
+        foreach ($candidates as $tag) {
             if (count($releases) >= self::LIST_SIZE) {
                 break;
             }
-            $cached = $this->cachedDate($repo, $branch, $tag['sha']);
+            $cached = $this->cachedDate($repo, $head, $tag['sha']);
             if (null !== $cached) {
                 $releases[] = new ChannelRelease($tag['name'], $tag['sha'], $cached > 0 ? $cached : null);
                 continue;
@@ -158,10 +299,7 @@ final class Checker
                 break;
             }
             $budget--;
-            $result = $this->confirm($repo, $branch, $tag);
-            if ('branch_missing' === $result) {
-                return new RepoState([], null, $tagShas, $this->env->now(), RepoState::BRANCH_MISSING, $branch, $warnings, $context);
-            }
+            $result = $this->confirm($repo, $head, $tag);
             if ($result instanceof ChannelRelease) {
                 $releases[] = $result;
             } elseif ('unknown' === $result && [] === $releases) {
@@ -182,23 +320,24 @@ final class Checker
     }
 
     /**
-     * One uncached compare: the release when the tag's commit is in the branch (and caches that answer),
-     * "not_contained", "branch_missing", or "unknown" when GitHub could not answer (never cached).
+     * One uncached compare against the branch head: the release when the tag's commit is in it (and caches
+     * that answer, keyed by the head SHA), "not_contained", or "unknown" when GitHub could not answer.
      *
      * @param array{name: string, sha: string} $tag
-     * @return ChannelRelease|'not_contained'|'branch_missing'|'unknown'
+     * @return ChannelRelease|'not_contained'|'unknown'
      */
-    private function confirm(RepoName $repo, string $branch, array $tag): ChannelRelease|string
+    private function confirm(RepoName $repo, string $head, array $tag): ChannelRelease|string
     {
         try {
-            $result = $this->github->compare($repo, $branch, $tag['sha']);
+            $result = $this->github->compare($repo, $head, $tag['sha']);
         } catch (GitHubError) {
             return 'unknown';
         }
         if ('contained' !== $result['status']) {
-            return $result['status'];
+            // The head exists (just resolved): a 404 here means GitHub could not compare this commit.
+            return 'branch_missing' === $result['status'] ? 'unknown' : 'not_contained';
         }
-        $this->storage->setTransient(self::cacheKey($repo, $branch, $tag['sha']), $result['date'] ?? 0, self::CONTAINMENT_TTL);
+        $this->storage->setTransient(self::cacheKey($repo, $head, $tag['sha']), $result['date'] ?? 0, self::CONTAINMENT_TTL);
 
         return new ChannelRelease($tag['name'], $tag['sha'], $result['date']);
     }
@@ -225,15 +364,16 @@ final class Checker
     }
 
     /** Commit date (0 when unknown) of a cached positive result, or null when not cached. */
-    private function cachedDate(RepoName $repo, string $branch, string $sha): ?int
+    private function cachedDate(RepoName $repo, string $head, string $sha): ?int
     {
-        $value = $this->storage->transient(self::cacheKey($repo, $branch, $sha));
+        $value = $this->storage->transient(self::cacheKey($repo, $head, $sha));
 
         return is_int($value) ? $value : null;
     }
 
-    private static function cacheKey(RepoName $repo, string $branch, string $sha): string
+    /** Keyed by the branch head's SHA: a cached "contained" is a fact about that commit, never about a ref name. */
+    private static function cacheKey(RepoName $repo, string $head, string $sha): string
     {
-        return Keys::COMPARE_PREFIX . md5($repo->full() . '|' . $branch . '|' . $sha);
+        return Keys::COMPARE_PREFIX . md5($repo->full() . '|' . $head . '|' . $sha);
     }
 }

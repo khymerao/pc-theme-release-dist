@@ -36,6 +36,7 @@ enum MessageCode: string
     case ThemeNotInstalled = 'theme_not_installed';
     case ThemeAlreadyMapped = 'theme_already_mapped';
     case RepoAlreadyMapped = 'repo_already_mapped';
+    case RepoPublic = 'repo_public';
     case TagNotInChannel = 'tag_not_in_channel';
     case TagAlreadyRecorded = 'tag_already_recorded';
     case MappingGone = 'mapping_gone';
@@ -95,7 +96,7 @@ enum MessageCode: string
             self::HostConfirmed => __('Site address confirmed.', 'pc-theme-release'),
             self::InvalidChannel => __('Error: choose Staging or Production.', 'pc-theme-release'),
             self::InvalidBranch => __('Error: a branch name may contain letters, digits, ".", "_", "-" and "/" (up to 255 characters).', 'pc-theme-release'),
-            self::InvalidToken => __('Error: the token must be 20–255 characters of letters, digits and "_". Nothing was saved.', 'pc-theme-release'),
+            self::InvalidToken => __('Error: the token must be a fine-grained personal access token: it starts with github_pat_ and has 20–255 letters, digits and "_". Nothing was saved.', 'pc-theme-release'),
             self::InvalidWebhookSecret => __('Error: the webhook secret must be at least 16 characters without control characters. Nothing was saved.', 'pc-theme-release'),
             self::SecretInConstant => __('Error: this secret is defined in wp-config.php; change it there.', 'pc-theme-release'),
             self::WeakSalts => __('Error: AUTH_KEY / SECURE_AUTH_KEY in wp-config.php are missing or weak, so secrets cannot be stored safely. Define PC_THEME_RELEASE_GITHUB_TOKEN / PC_THEME_RELEASE_WEBHOOK_SECRET in wp-config.php instead.', 'pc-theme-release'),
@@ -103,6 +104,7 @@ enum MessageCode: string
             self::ThemeNotInstalled => __('Error: choose an installed theme.', 'pc-theme-release'),
             self::ThemeAlreadyMapped => __('Error: this theme is already managed.', 'pc-theme-release'),
             self::RepoAlreadyMapped => __('Error: this repository is already mapped to another theme.', 'pc-theme-release'),
+            self::RepoPublic => __('Error: the repository is public; only private repositories are accepted. Nothing was saved.', 'pc-theme-release'),
             self::TagNotInChannel => __('Error: that tag is not a tag of this site\'s channel. Run Check now and try again.', 'pc-theme-release'),
             self::TagAlreadyRecorded => __('Error: an installed tag is already recorded for this theme. Nothing was changed.', 'pc-theme-release'),
             self::MappingGone => __('Error: this theme is no longer managed.', 'pc-theme-release'),

@@ -133,7 +133,9 @@ final class Actions
     /** @throws ValidationError */
     private function addMapping(Input $input): MessageCode
     {
-        $mapping = $this->mappings->add($input->text('theme'), $input->text('repo'), $input->text('branch'));
+        // A public repository is refused before anything is stored (audit N1); without a token the id is learnt at the next check.
+        $identify = $this->site->isOperational() ? [$this->checker, 'idForNewMapping'] : null;
+        $mapping = $this->mappings->add($input->text('theme'), $input->text('repo'), $input->text('branch'), $identify);
         $this->log->add('mapping_added', $mapping->repo->full());
         if ($this->site->isOperational()) {
             $this->checker->checkRepo($mapping->repo, 'mapping_added');
@@ -174,6 +176,8 @@ final class Actions
         }
         $release = $this->offers->currentState($mapping)->release($tag) ?? throw new ValidationError('tag_not_in_channel');
         $this->mappings->recordInstall($mapping->stylesheet, new InstallRecord($release->tag, $release->sha, $this->env->now()), $mapping->frozen);
+        // The offer over the new record needs GitHub's word that the newer tag comes after it (audit N2).
+        $this->checker->confirmAncestry($mapping->stylesheet);
         UpdateTransient::refresh();
 
         return MessageCode::TagSeeded;
@@ -185,6 +189,7 @@ final class Actions
         $mapping = $this->mappings->require($stylesheet);
         $this->mappings->setFrozen($mapping->stylesheet, false);
         $this->log->add('unfrozen', $mapping->repo->full());
+        $this->checker->confirmAncestry($mapping->stylesheet);
         UpdateTransient::refresh();
 
         return MessageCode::Unfrozen;

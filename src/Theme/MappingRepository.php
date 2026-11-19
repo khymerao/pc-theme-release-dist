@@ -68,8 +68,33 @@ final class MappingRepository
             && 1 !== preg_match('#[/\\\\\x00-\x1F\x7F]#', $stylesheet);
     }
 
-    /** @throws ValidationError */
-    public function add(string $stylesheet, string $repo, string $branchOverride): Mapping
+    public function findByRepoId(int $repoId): ?Mapping
+    {
+        foreach ($this->all() as $mapping) {
+            if ($repoId === $mapping->repoId) {
+                return $mapping;
+            }
+        }
+
+        return null;
+    }
+
+    /** Stores the repository's GitHub id (trust on first use); never overwrites one already stored. */
+    public function setRepoId(string $stylesheet, int $repoId): void
+    {
+        $mapping = $this->get($stylesheet);
+        if (null !== $mapping && null === $mapping->repoId) {
+            $this->save($mapping->withRepoId($repoId));
+        }
+    }
+
+    /**
+     * @param (callable(RepoName): ?int)|null $identify Runs after every other check and before the save:
+     *        the repository's id (null: not known yet), or a ValidationError (a public repository).
+     *
+     * @throws ValidationError
+     */
+    public function add(string $stylesheet, string $repo, string $branchOverride, ?callable $identify = null): Mapping
     {
         // Only a key of wp_get_themes(): wp_get_theme() also "finds" paths such as ../uploads.
         if (! self::isSafeStylesheet($stylesheet) || ! array_key_exists($stylesheet, $this->themes->installed())) {
@@ -83,7 +108,7 @@ final class MappingRepository
         if (null !== $this->findByRepo($name)) {
             throw new ValidationError('repo_already_mapped');
         }
-        $mapping = new Mapping($stylesheet, $name, $branch, null, false);
+        $mapping = new Mapping($stylesheet, $name, $branch, null, false, null === $identify ? null : $identify($name));
         $this->save($mapping);
 
         return $mapping;
@@ -172,6 +197,7 @@ final class MappingRepository
             is_string($data['branch'] ?? null) ? $data['branch'] : '',
             $record,
             true === ($data['frozen'] ?? false),
+            is_int($data['repo_id'] ?? null) && $data['repo_id'] > 0 ? $data['repo_id'] : null,
         );
     }
 }

@@ -6,6 +6,7 @@ namespace ProCoders\ThemeRelease\Update;
 
 use ProCoders\ThemeRelease\Config\SiteContext;
 use ProCoders\ThemeRelease\GitHub\GitHubClient;
+use ProCoders\ThemeRelease\Release\Checker;
 use ProCoders\ThemeRelease\Release\StatusLog;
 use ProCoders\ThemeRelease\Release\UpdateTransient;
 use ProCoders\ThemeRelease\Status\Offers;
@@ -23,6 +24,10 @@ final class Module
 {
     private const string WPORG_CHECK = 'api.wordpress.org/themes/update-check/';
 
+    /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
+    private static ?\Closure $factory = null;
+    private static ?self $instance = null;
+
     private readonly Installer $installer;
     private readonly InstallFlow $installs;
 
@@ -34,26 +39,108 @@ final class Module
         Themes $themes,
         StatusLog $log,
         Environment $env,
+        Checker $checker,
         CoreUpgrader $core = new WpCoreUpgrader(),
         ?callable $tempFile = null,
     ) {
-        $this->installer = new Installer($site, $mappings, $offers, $github, $core, $themes, $log, $env, $tempFile);
+        $this->installer = new Installer($site, $mappings, $offers, $github, $core, $themes, $log, $env, $checker, $tempFile);
         $this->installs = new InstallFlow($mappings, $offers, $this->installer, $core);
     }
 
-    public function register(): void
+    /**
+     * Registers the hooks with named static callbacks; the module is built only when one of them needs it,
+     * so a frontend request builds nothing (footprint 1). The `shutdown` lock release is registered by the
+     * installer when a download takes the lock (footprint 3).
+     *
+     * @param \Closure(): self $factory
+     */
+    public static function hook(\Closure $factory): void
     {
-        add_filter('pre_set_site_transient_update_themes', [$this, 'filterTransient'], 20);
-        add_filter('http_request_args', [$this, 'stripWpOrgRequest'], 10, 2);
-        add_filter('auto_update_theme', [$this, 'disableAutoUpdate'], 20, 2);
-        add_filter('theme_auto_update_setting_html', [$this, 'autoUpdateHtml'], 20, 2);
-        add_filter('theme_auto_update_setting_template', [$this, 'autoUpdateTemplate'], 20);
-        add_filter('upgrader_pre_download', [$this->installer, 'preDownload'], 10, 4);
-        add_filter('upgrader_source_selection', [$this->installer, 'select'], 10, 4);
-        add_filter('upgrader_post_install', [$this->installer, 'afterInstall'], 20, 3);
+        self::$factory = $factory;
+        self::$instance = null;
+        add_filter('pre_set_site_transient_update_themes', [self::class, 'onUpdateTransient'], 20);
+        add_filter('http_request_args', [self::class, 'onHttpRequestArgs'], 10, 2);
+        add_filter('auto_update_theme', [self::class, 'onAutoUpdate'], 20, 2);
+        add_filter('theme_auto_update_setting_html', [self::class, 'onAutoUpdateHtml'], 20, 2);
+        add_filter('theme_auto_update_setting_template', [self::class, 'onAutoUpdateTemplate'], 20);
+        add_filter('upgrader_pre_download', [self::class, 'onPreDownload'], 10, 4);
+        add_filter('upgrader_source_selection', [self::class, 'onSourceSelection'], 10, 4);
+        add_filter('upgrader_post_install', [self::class, 'onPostInstall'], 20, 3);
         // A core update holds the upgrader lock from the download until the whole run ends (audit S6).
-        add_action('upgrader_process_complete', [$this->installer, 'releaseLock'], 10, 0);
-        add_action('shutdown', [$this->installer, 'releaseLock'], 10, 0);
+        add_action('upgrader_process_complete', [self::class, 'onProcessComplete'], 10, 0);
+    }
+
+    /** The module, built on the first hook that needs it. */
+    private static function instance(): self
+    {
+        if (null === self::$instance) {
+            $factory = self::$factory ?? throw new \LogicException('Module not hooked.');
+            self::$instance = $factory();
+        }
+
+        return self::$instance;
+    }
+
+    /** Whether anything in this request needed the module (frontend requests never do). */
+    public static function built(): bool
+    {
+        return null !== self::$instance;
+    }
+
+    public static function onUpdateTransient(mixed $transient): mixed
+    {
+        return self::instance()->filterTransient($transient);
+    }
+
+    /** Looks at the URL first: any request but wordpress.org's theme update check builds nothing. */
+    public static function onHttpRequestArgs(mixed $args, mixed $url = ''): mixed
+    {
+        if (! is_array($args) || ! self::isWpOrgThemeCheck($url)) {
+            return $args;
+        }
+
+        return self::instance()->stripWpOrgRequest($args, $url);
+    }
+
+    public static function onAutoUpdate(mixed $update, mixed $item = null): mixed
+    {
+        return self::instance()->disableAutoUpdate($update, $item);
+    }
+
+    public static function onAutoUpdateHtml(mixed $html, mixed $stylesheet = ''): mixed
+    {
+        return is_string($html) && is_string($stylesheet) ? self::instance()->autoUpdateHtml($html, $stylesheet) : $html;
+    }
+
+    public static function onAutoUpdateTemplate(mixed $template): mixed
+    {
+        return is_string($template) ? self::instance()->autoUpdateTemplate($template) : $template;
+    }
+
+    public static function onPreDownload(mixed $reply, mixed $package, mixed $upgrader = null, mixed $hookExtra = []): mixed
+    {
+        return self::instance()->installer->preDownload($reply, $package, $upgrader, is_array($hookExtra) ? $hookExtra : []);
+    }
+
+    /** Only a package this request's installer supplied is looked at; nothing is built for others. */
+    public static function onSourceSelection(mixed $source, mixed $remoteSource = null, mixed $upgrader = null, mixed $hookExtra = []): mixed
+    {
+        if (null === self::$instance || ! is_array($hookExtra)) {
+            return $source;
+        }
+
+        return self::$instance->installer->select($source, $remoteSource, $upgrader, $hookExtra);
+    }
+
+    public static function onPostInstall(mixed $response, mixed $hookExtra = [], mixed $result = null): mixed
+    {
+        return null === self::$instance ? $response : self::$instance->installer->afterInstall($response, $hookExtra, $result);
+    }
+
+    /** Releases the lock a core update of this request took; nothing to do when nothing was built. */
+    public static function onProcessComplete(): void
+    {
+        self::$instance?->installer->releaseLock();
     }
 
     /** The rollback and switch installs, for the plugin screen. */
@@ -110,7 +197,7 @@ final class Module
      */
     public function stripWpOrgRequest(array $args, string $url): array
     {
-        if (! str_contains($url, self::WPORG_CHECK) || ! is_array($args['body'] ?? null) || ! is_string($args['body']['themes'] ?? null)) {
+        if (! self::isWpOrgThemeCheck($url) || ! is_array($args['body'] ?? null) || ! is_string($args['body']['themes'] ?? null)) {
             return $args;
         }
         $request = json_decode($args['body']['themes'], true);
@@ -128,6 +215,26 @@ final class Module
         $args['body']['themes'] = (string) wp_json_encode($request);
 
         return $args;
+    }
+
+    /**
+     * wordpress.org's theme update check, by the parsed host and path (review F3), never by a substring
+     * of the whole URL: https://api.wordpress.org/themes/update-check/… only.
+     */
+    public static function isWpOrgThemeCheck(mixed $url): bool
+    {
+        if (! is_string($url)) {
+            return false;
+        }
+        $parts = parse_url($url);
+        [$host, $path] = explode('/', self::WPORG_CHECK, 2);
+
+        return is_array($parts)
+            && in_array($parts['scheme'] ?? '', ['http', 'https'], true)
+            && $host === strtolower($parts['host'] ?? '')
+            && ! isset($parts['user'])
+            && ! isset($parts['port'])
+            && str_starts_with($parts['path'] ?? '', '/' . $path);
     }
 
     /** Filter `auto_update_theme`: managed themes are updated manually only. */

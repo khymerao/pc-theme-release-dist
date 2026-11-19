@@ -9,9 +9,12 @@ use ProCoders\ThemeRelease\GitHub\GitHubClient;
 use ProCoders\ThemeRelease\GitHub\GitHubError;
 use ProCoders\ThemeRelease\GitHub\GitHubErrorKind;
 use ProCoders\ThemeRelease\GitHub\RepoName;
+use ProCoders\ThemeRelease\GitHub\Zipball;
+use ProCoders\ThemeRelease\Release\Checker;
 use ProCoders\ThemeRelease\Release\StatusLog;
 use ProCoders\ThemeRelease\Release\UpdateTransient;
 use ProCoders\ThemeRelease\Status\Offers;
+use ProCoders\ThemeRelease\Status\ThemeStatus;
 use ProCoders\ThemeRelease\Support\Environment;
 use ProCoders\ThemeRelease\Support\ValidationError;
 use ProCoders\ThemeRelease\Theme\InstallRecord;
@@ -43,7 +46,7 @@ final class Installer
     /** @var array<string, Run> stylesheet → the package this request supplied */
     private array $runs = [];
 
-    /** @var array<string, array{sha: string, mode: InstallMode}> stylesheet → what InstallFlow installs itself */
+    /** @var array<string, array{sha: string, mode: InstallMode, tag: string}> stylesheet → what InstallFlow installs itself */
     private array $expected = [];
 
     /** @param (callable(): string)|null $tempFile */
@@ -56,6 +59,7 @@ final class Installer
         private readonly Themes $themes,
         private readonly StatusLog $log,
         private readonly Environment $env,
+        private readonly Checker $checker,
         ?callable $tempFile = null,
     ) {
         $this->tempFile = null === $tempFile
@@ -63,10 +67,13 @@ final class Installer
             : \Closure::fromCallable($tempFile);
     }
 
-    /** InstallFlow is about to install this SHA itself (rollback or channel switch), holding the lock. */
-    public function expect(string $stylesheet, string $sha, InstallMode $mode): void
+    /**
+     * InstallFlow is about to install this SHA itself (rollback or channel switch), holding the lock; $tag is
+     * the tag the admin chose, recorded as such even when another tag names the same commit (audit N4).
+     */
+    public function expect(string $stylesheet, string $sha, InstallMode $mode, string $tag = ''): void
     {
-        $this->expected[$stylesheet] = ['sha' => $sha, 'mode' => $mode];
+        $this->expected[$stylesheet] = ['sha' => $sha, 'mode' => $mode, 'tag' => $tag];
     }
 
     public function clearExpected(string $stylesheet): void
@@ -85,24 +92,37 @@ final class Installer
             return $reply;
         }
         $run = $this->match($package, $hookExtra);
-        if (null === $run || $run instanceof \WP_Error) {
-            return $run ?? $reply;
+        if (null === $run) {
+            return $this->refuseForeign($hookExtra) ?? $reply;
+        }
+        if ($run instanceof \WP_Error) {
+            return $run;
         }
         if (! wp_is_file_mod_allowed('pc_theme_release_install')) {
             return new \WP_Error('pc_theme_release_file_mods', __('File modifications are disabled on this site (DISALLOW_FILE_MODS).', 'pc-theme-release'));
         }
         // A core update takes the lock and holds it until the run ends, so no rollback or switch can start
         // meanwhile (D3, audit S6). Taken once per request: a bulk run installs several themes under it.
-        // InstallFlow's own rollback/switch already holds it, so only the core update takes it.
+        // InstallFlow's own rollback/switch already holds it, so only the core update takes it. A failed run may
+        // never reach upgrader_process_complete, so the release on shutdown is registered here, before any refusal.
         if (InstallMode::Update === $run['mode'] && ! $this->holdsLock) {
             if (! $this->core->acquireLock()) {
                 return new \WP_Error('pc_theme_release_locked', __('Another theme update or rollback is running. Try again in a minute.', 'pc-theme-release'));
             }
             $this->holdsLock = true;
+            add_action('shutdown', [$this, 'releaseLock'], 10, 0);
+        }
+        $names = $this->confirmBeforeDownload($run);
+        if ($names instanceof \WP_Error) {
+            return $names;
         }
         $file = ($this->tempFile)();
+        // Owner-only from the start: the theme package never sits world-readable in the temp dir (audit N10).
+        if ('' === $file || ! is_file($file) || ! chmod($file, 0600)) {
+            return new \WP_Error('pc_theme_release_download', __('The theme package could not be downloaded from GitHub. See Appearance → Theme Release.', 'pc-theme-release'));
+        }
         try {
-            $this->github->downloadZip($run['repo'], $run['sha'], $file);
+            $this->github->downloadZip($run['repo'], $run['sha'], $file, $names);
         } catch (GitHubError $error) {
             wp_delete_file($file);
             $this->log->add('download_failed', $run['repo']->full(), $run['tag'], $error->httpStatus);
@@ -113,9 +133,72 @@ final class Installer
 
             return new \WP_Error('pc_theme_release_download', __('The theme package could not be downloaded from GitHub. See Appearance → Theme Release.', 'pc-theme-release'));
         }
+        // The zip must be GitHub's archive of exactly this commit: its comment is the SHA (audit N7).
+        if (! Zipball::matches($file, $run['sha'])) {
+            wp_delete_file($file);
+            $this->log->add('package_mismatch', $run['repo']->full(), $run['tag']);
+
+            return self::refusePackage(__('The downloaded package is not the GitHub archive of the expected commit, so it was not installed.', 'pc-theme-release'));
+        }
         $this->runs[$run['stylesheet']] = $run;
 
         return $file;
+    }
+
+    /**
+     * The fresh check right before a download (audit N3): the repository is still the mapped one and the
+     * commit is in the channel branch as GitHub resolves it now. The repository's current name (after a
+     * rename) for the codeload check, or the refusal.
+     *
+     * @param Run $run
+     * @return list<RepoName>|\WP_Error
+     */
+    private function confirmBeforeDownload(array $run): array|\WP_Error
+    {
+        $mapping = $this->mappings->get($run['stylesheet']);
+        if (null === $mapping) {
+            return self::notOurs();
+        }
+        try {
+            $confirmed = $this->checker->confirmForInstall($mapping, $run['sha']);
+        } catch (GitHubError $error) {
+            $this->log->add('download_refused', $run['repo']->full(), $run['tag'], $error->httpStatus);
+            if (GitHubErrorKind::RateLimited === $error->kind) {
+                $until = $this->offers->evaluate($mapping)->rateLimitedUntil;
+
+                return new \WP_Error('pc_theme_release_rate_limited', ThemeStatus::errorText($error->kind->value, '', $mapping->repo->full(), $until) . ' ' . __('Nothing was installed.', 'pc-theme-release'));
+            }
+
+            return new \WP_Error('pc_theme_release_unconfirmed', __('GitHub could not confirm the theme version right before the download, so nothing was installed. Try again in a minute.', 'pc-theme-release'));
+        }
+        $refusal = $confirmed['refusal'];
+        if (null === $refusal) {
+            return $confirmed['names'];
+        }
+        $this->log->add('download_refused', $run['repo']->full(), $run['tag']);
+        $branch = $this->offers->evaluate($mapping)->branch;
+        if ('not_in_branch' === $refusal) {
+            /* translators: %s: branch name. */
+            return new \WP_Error('pc_theme_release_not_in_branch', sprintf(__('This theme version is no longer in the %s branch on GitHub, so nothing was installed. Reload the updates screen.', 'pc-theme-release'), $branch));
+        }
+
+        return new \WP_Error('pc_theme_release_repository', ThemeStatus::errorText($refusal, $branch, $mapping->repo->full()) . ' ' . __('Nothing was installed.', 'pc-theme-release'));
+    }
+
+    /**
+     * A theme this plugin manages is installed only from the plugin's own packages (audit N6): any other
+     * package for it (wordpress.org, another updater) is refused. Themes in Git Updater conflict stay out.
+     *
+     * @param array<string, mixed> $hookExtra
+     */
+    private function refuseForeign(array $hookExtra): ?\WP_Error
+    {
+        $theme = is_string($hookExtra['theme'] ?? null) ? $hookExtra['theme'] : null;
+        if (null === $theme || null === $this->mappings->get($theme) || $this->themes->managedByGitUpdater($theme)) {
+            return null;
+        }
+
+        return new \WP_Error('pc_theme_release_foreign_package', __('This theme is managed by ProCoders Theme Release: a package from another source was refused. Nothing was installed.', 'pc-theme-release'));
     }
 
     /**
@@ -236,24 +319,23 @@ final class Installer
         if (null === $release) {
             return self::notOurs();
         }
-        $mode = $this->expectedMode($theme, $release->sha);
-        if (null === $mode) {
+        $expected = $this->expected[$theme] ?? null;
+        if (null !== $expected && $expected['sha'] === $release->sha) {
+            // The tag the admin chose, when it names this commit (two tags on one commit, audit N4).
+            $chosen = $this->offers->currentState($mapping)->release($expected['tag']);
+            $tag = null !== $chosen && $chosen->sha === $release->sha ? $chosen->tag : $release->tag;
+            $mode = $expected['mode'];
+        } else {
             // A core update installs only what is offered now: never a frozen theme, never an older tag.
-            if ($this->offers->evaluate($mapping)->offer?->sha !== $release->sha) {
+            $offer = $this->offers->evaluate($mapping)->offer;
+            if ($offer?->sha !== $release->sha) {
                 return new \WP_Error('pc_theme_release_not_offered', __('This theme version is not offered any more. Reload the updates screen. Nothing was installed.', 'pc-theme-release'));
             }
+            $tag = $offer->tag;
             $mode = InstallMode::Update;
         }
 
-        return ['stylesheet' => $mapping->stylesheet, 'repo' => $repo, 'tag' => $release->tag, 'sha' => $release->sha, 'mode' => $mode, 'packageVersion' => ''];
-    }
-
-    /** The mode InstallFlow announced for exactly this SHA, or null (a core update). */
-    private function expectedMode(string $stylesheet, string $sha): ?InstallMode
-    {
-        $expected = $this->expected[$stylesheet] ?? null;
-
-        return null !== $expected && $expected['sha'] === $sha ? $expected['mode'] : null;
+        return ['stylesheet' => $mapping->stylesheet, 'repo' => $repo, 'tag' => $tag, 'sha' => $release->sha, 'mode' => $mode, 'packageVersion' => ''];
     }
 
     /** Whether core's current update entry for the theme was written by this plugin (marked). */
