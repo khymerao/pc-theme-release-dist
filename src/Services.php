@@ -4,21 +4,21 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease;
 
-use ProCoders\ThemeRelease\Config\SiteContext;
-use ProCoders\ThemeRelease\GitHub\GitHubClient;
-use ProCoders\ThemeRelease\GitHub\WpHttpClient;
-use ProCoders\ThemeRelease\Release\Checker;
-use ProCoders\ThemeRelease\Release\StateStore;
-use ProCoders\ThemeRelease\Release\StatusLog;
-use ProCoders\ThemeRelease\Security\Secrets;
-use ProCoders\ThemeRelease\Security\SecretVault;
-use ProCoders\ThemeRelease\Status\Health;
-use ProCoders\ThemeRelease\Status\Offers;
-use ProCoders\ThemeRelease\Support\Environment;
-use ProCoders\ThemeRelease\Support\Storage;
-use ProCoders\ThemeRelease\Theme\MappingRepository;
-use ProCoders\ThemeRelease\Theme\Themes;
-use ProCoders\ThemeRelease\Update\Module as UpdateModule;
+use ProCoders\ThemeRelease\Core\Config\SiteContext;
+use ProCoders\ThemeRelease\Core\GitHub\GitHubClient;
+use ProCoders\ThemeRelease\Core\GitHub\WpHttpClient;
+use ProCoders\ThemeRelease\Core\Security\Secrets;
+use ProCoders\ThemeRelease\Core\Security\SecretVault;
+use ProCoders\ThemeRelease\Core\Support\Environment;
+use ProCoders\ThemeRelease\Core\Support\Storage;
+use ProCoders\ThemeRelease\Domain\Release\Checker;
+use ProCoders\ThemeRelease\Domain\Release\StateStore;
+use ProCoders\ThemeRelease\Domain\Release\StatusLog;
+use ProCoders\ThemeRelease\Domain\Status\Health;
+use ProCoders\ThemeRelease\Domain\Status\Offers;
+use ProCoders\ThemeRelease\Domain\Theme\MappingRepository;
+use ProCoders\ThemeRelease\Domain\Theme\Themes;
+use ProCoders\ThemeRelease\Modules\Update\Module as UpdateModule;
 
 /**
  * The shared services of one request, each built on first use and then shared by every module, so a

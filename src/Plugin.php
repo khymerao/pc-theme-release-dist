@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace ProCoders\ThemeRelease;
 
-use ProCoders\ThemeRelease\Admin\Module as AdminModule;
-use ProCoders\ThemeRelease\GitHub\TlsPolicy;
-use ProCoders\ThemeRelease\Health\Module as HealthModule;
-use ProCoders\ThemeRelease\Lifecycle\Module as LifecycleModule;
-use ProCoders\ThemeRelease\Update\Module as UpdateModule;
-use ProCoders\ThemeRelease\Webhook\Module as WebhookModule;
+use ProCoders\ThemeRelease\Core\GitHub\TlsPolicy;
+use ProCoders\ThemeRelease\Modules\Admin\Module as AdminModule;
+use ProCoders\ThemeRelease\Modules\Health\Module as HealthModule;
+use ProCoders\ThemeRelease\Modules\Lifecycle\Module as LifecycleModule;
+use ProCoders\ThemeRelease\Modules\Update\Module as UpdateModule;
+use ProCoders\ThemeRelease\Modules\Webhook\Module as WebhookModule;
 
 /**
  * Composition root (`plugins_loaded`): each module registers its hooks with named static callbacks and
