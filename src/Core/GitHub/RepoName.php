@@ -29,6 +29,27 @@ final readonly class RepoName
         return new self(strtolower($m[1]), strtolower($m[2]));
     }
 
+    /**
+     * What an admin types or pastes: "owner/repo", or a github.com URL in any common shape (https, www, no
+     * scheme, ".git", trailing slash, /tree/…, /blob/…, ?query, #anchor, git@github.com:owner/repo.git,
+     * ssh://git@github.com/…). Only the github.com host is trimmed; anything else must be "owner/repo".
+     *
+     * @throws ValidationError
+     */
+    public static function fromInput(string $value): self
+    {
+        $value = trim($value);
+        if (1 === preg_match('#^(?:(?:https?|ssh|git)://)?(?:[^@/\s]+@)?(?:www\.)?github\.com[:/]+([^/?\#\s]+)/([^/?\#\s]+)#i', $value, $m)) {
+            $value = $m[1] . '/' . $m[2];
+        }
+        $value = rtrim($value, '/');
+        if (str_ends_with(strtolower($value), '.git')) {
+            $value = substr($value, 0, -4);
+        }
+
+        return self::fromString($value);
+    }
+
     public function full(): string
     {
         return $this->owner . '/' . $this->name;

@@ -56,6 +56,7 @@ final class Checker
             $this->checkMapping($mapping, $trigger);
             $count++;
         }
+        $this->checkDeliveries();
         $this->state->setInt(Keys::LAST_CHECK_AT, $this->env->now());
         UpdateTransient::refresh();
 
@@ -177,6 +178,31 @@ final class Checker
         $verdict = $this->withAncestry($mapping, $state);
         if ($verdict !== $state) {
             $this->state->saveRepo($mapping->repo, $verdict);
+        }
+    }
+
+    /**
+     * After every tag check of a cron or Check now round (never for a webhook or a new mapping): the GitHub
+     * delivery log of this site webhook, per repository (spec call 1). Without a webhook secret nothing is read
+     * and every stored result is removed (spec call 15). A repository that is not the mapped one is skipped.
+     */
+    private function checkDeliveries(): void
+    {
+        if (! $this->site->webhookInUse()) {
+            $this->state->forgetDeliveries();
+            return;
+        }
+        $check = new DeliveryCheck($this->github, $this->state, $this->env);
+        $endpoint = rest_url(Keys::REST_NAMESPACE . '/webhook');
+        $prefix = rest_get_url_prefix();
+        $notMapped = [RepoState::REPO_PUBLIC, RepoState::REPO_REPLACED, GitHubErrorKind::NotFound->value];
+        foreach ($this->mappings->all() as $mapping) {
+            if (in_array($this->state->repo($mapping->repo)->error, $notMapped, true)) {
+                // Not the mapped repository now: what was read about it before no longer applies.
+                $this->state->forgetDelivery($mapping->repo);
+                continue;
+            }
+            $check->check($mapping->repo, $endpoint, $prefix);
         }
     }
 

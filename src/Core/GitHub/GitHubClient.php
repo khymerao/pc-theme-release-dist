@@ -179,6 +179,92 @@ final class GitHubClient
     }
 
     /**
+     * The repository webhooks (needs the token permission Webhooks: read). Only the fields the delivery check
+     * reads; a hook without an integer id is skipped. The secret and the rest of the config are never kept.
+     *
+     * @return list<array{id: int, active: bool, events: list<string>, url: string, content_type: string}>
+     *
+     * @throws GitHubError NotFound / Forbidden when the token may not read them.
+     */
+    public function hooks(RepoName $repo): array
+    {
+        $response = $this->apiGet($repo->apiPath() . '/hooks?per_page=' . self::PER_PAGE);
+        $rows = json_decode($response['body'], true);
+        if (! is_array($rows) || ! array_is_list($rows)) {
+            throw new GitHubError(GitHubErrorKind::BadResponse, $response['status']);
+        }
+        $hooks = [];
+        foreach ($rows as $row) {
+            $id = is_array($row) ? ($row['id'] ?? null) : null;
+            if (! is_int($id) || $id <= 0) {
+                continue;
+            }
+            $config = is_array($row['config'] ?? null) ? $row['config'] : [];
+            $events = is_array($row['events'] ?? null) ? array_values(array_filter($row['events'], 'is_string')) : [];
+            $hooks[] = [
+                'id' => $id,
+                'active' => true === ($row['active'] ?? null),
+                'events' => $events,
+                'url' => is_string($config['url'] ?? null) ? $config['url'] : '',
+                'content_type' => is_string($config['content_type'] ?? null) ? $config['content_type'] : '',
+            ];
+        }
+
+        return $hooks;
+    }
+
+    /**
+     * The latest deliveries of one repository webhook (GitHub keeps 3 days), in GitHub order. A row without a
+     * readable `delivered_at` is skipped; a missing status code is 0 (no HTTP response).
+     *
+     * @return list<array{delivered_at: int, status: string, status_code: int}>
+     *
+     * @throws GitHubError
+     */
+    public function hookDeliveries(RepoName $repo, int $hookId, int $limit): array
+    {
+        $response = $this->apiGet($repo->apiPath() . '/hooks/' . $hookId . '/deliveries?per_page=' . $limit);
+        $rows = json_decode($response['body'], true);
+        if (! is_array($rows) || ! array_is_list($rows)) {
+            throw new GitHubError(GitHubErrorKind::BadResponse, $response['status']);
+        }
+        $deliveries = [];
+        foreach ($rows as $row) {
+            $raw = is_array($row) ? ($row['delivered_at'] ?? null) : null;
+            $time = is_string($raw) ? self::utcTime($raw) : null;
+            if (null === $time) {
+                continue;
+            }
+            $code = $row['status_code'] ?? null;
+            $deliveries[] = [
+                'delivered_at' => $time,
+                'status' => is_string($row['status'] ?? null) ? $row['status'] : '',
+                'status_code' => is_int($code) ? $code : 0,
+            ];
+        }
+
+        if ([] === $deliveries && [] !== $rows) {
+            // Rows came, none readable: not "no deliveries", a malformed answer (the previous result is kept).
+            throw new GitHubError(GitHubErrorKind::BadResponse, $response['status']);
+        }
+
+        return $deliveries;
+    }
+
+    /** Unix time of an ISO 8601 time GitHub sends (UTC when it has no offset), or null. */
+    private static function utcTime(string $value): ?int
+    {
+        if ('' === trim($value)) {
+            return null;
+        }
+        try {
+            return (new \DateTimeImmutable(trim($value), new \DateTimeZone('UTC')))->getTimestamp();
+        } catch (\Exception) {
+            return null;
+        }
+    }
+
+    /**
      * Downloads the zipball of a commit into $target. The codeload redirect must be for the repository
      * ($repo or one of $alsoNamed, its current name after a rename) and for exactly this commit.
      *

@@ -100,7 +100,7 @@ final class MappingRepository
         if (! self::isSafeStylesheet($stylesheet) || ! array_key_exists($stylesheet, $this->themes->installed())) {
             throw new ValidationError('theme_not_installed');
         }
-        $name = RepoName::fromString($repo);
+        $name = RepoName::fromInput($repo);
         $branch = '' === trim($branchOverride) ? '' : SiteContext::validBranch($branchOverride);
         if (null !== $this->get($stylesheet)) {
             throw new ValidationError('theme_already_mapped');

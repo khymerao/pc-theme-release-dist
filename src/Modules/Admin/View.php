@@ -20,6 +20,25 @@ final class View
         echo '</div>';
     }
 
+    /**
+     * The webhook delivery alert: one error notice (not dismissible while the failure lasts) listing every failing
+     * repository with a link to its webhook on GitHub, then a link to the Health and log tab. Nothing when empty.
+     *
+     * @param list<array{label: string, link: string}> $alerts
+     */
+    public static function deliveryAlert(array $alerts): void
+    {
+        if ([] === $alerts) {
+            return;
+        }
+        echo '<div class="notice notice-error pctr-delivery-alert"><p><strong>' . esc_html__('Theme Release:', 'pc-theme-release') . '</strong> '
+            . esc_html__('GitHub cannot deliver webhooks to this site, so new tags arrive only with the 12-hour check.', 'pc-theme-release') . '</p><ul>';
+        foreach ($alerts as $alert) {
+            echo '<li>' . esc_html($alert['label']) . ' <a href="' . esc_url($alert['link']) . '">' . esc_html__('Webhook settings on GitHub', 'pc-theme-release') . '</a></li>';
+        }
+        echo '</ul><p><a href="' . esc_url(Tab::Health->url()) . '">' . esc_html__('Open Health & log', 'pc-theme-release') . '</a></p></div>';
+    }
+
     /** Opens a POST form to admin-post.php with the action and its nonce (and an id for `form=` buttons). Caller closes it. */
     public static function formStart(Action $action, string $id = ''): void
     {

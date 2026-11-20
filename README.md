@@ -10,9 +10,10 @@ Themes from private GitHub repos as normal WordPress updates. WordPress 6.4+, PH
 2. **GitHub** -> token. GitHub: *Settings -> Developer settings -> Personal access tokens -> Fine-grained tokens ->
    Generate new token*.
    Owner: the organisation. Repositories: only this site's themes. Permissions: **Contents: Read-only**,
-   **Metadata: Read-only**. One token per site. Only fine-grained tokens (`github_pat_…`) are accepted.
+   **Metadata: Read-only**, and **Webhooks: Read-only** for delivery alerts (optional; reading webhooks also needs
+   the token owner to be a repository admin). One token per site. Only fine-grained tokens (`github_pat_…`) are accepted.
 3. **GitHub** -> **Generate a new webhook secret**. Shown once.
-4. **Themes** -> **Add theme** (`owner/repo`), then **Record installed tag**. Public repositories are refused.
+4. **Themes** -> **Add theme** (`owner/repo` or the GitHub URL), then **Record installed tag**. Public repositories are refused.
 5. Each theme repo: *Settings -> Webhooks -> Add webhook*. URL from the **GitHub** tab, content type
    **application/json**, the secret, events **Branch or tag creation** and **Pushes**.
 
@@ -38,6 +39,20 @@ The zip is the tagged commit, so the repo root must be the theme; drop dev files
 - **Rollback**: **Change version** -> tag -> **Rollback…**. The theme is frozen until **Unfreeze**.
 - Theme on a tag from the other channel: **Update all** installs this channel's newest tag, even a lower one;
   roll the theme back to freeze it instead.
+
+## Webhook delivery alerts
+
+With a webhook secret set, the 12-hour check and **Check now** also read GitHub's *Recent Deliveries* of the webhook
+that points at this site (two API calls per repository).
+
+- **Red notice** on admin screens and Site Health *critical*: the newest delivery failed (GitHub's reason, the last
+  successful delivery), the webhook is disabled, or it sends no tag events / not `application/json`. The links open
+  the webhook on GitHub and **Health & log**.
+- It clears at the next check that sees a successful delivery, or at once when this site receives a valid signed
+  delivery for that repository.
+- Site Health *recommended*: no webhook points at this site (organisation webhooks are not visible), the token lacks
+  **Webhooks: Read-only**, or the last reading is more than 48 hours old.
+- Not wanted: delete the webhook secret (updates then come only from the 12-hour check and Check now).
 
 ## Notes
 

@@ -12,6 +12,8 @@ use ProCoders\ThemeRelease\Core\Security\SecretSource;
 use ProCoders\ThemeRelease\Core\Security\SecretVault;
 use ProCoders\ThemeRelease\Core\Support\Environment;
 use ProCoders\ThemeRelease\Core\Support\Keys;
+use ProCoders\ThemeRelease\Core\GitHub\RepoName;
+use ProCoders\ThemeRelease\Domain\Release\DeliveryStatus;
 use ProCoders\ThemeRelease\Domain\Release\StateStore;
 
 /**
@@ -124,6 +126,125 @@ final class Health
         }
 
         return $items;
+    }
+
+    /**
+     * @return list<HealthItem> What the last check read about the webhook deliveries to this site, one item per
+     *         repository that has a result, as shown now (spec calls 2, 12, 13). Nothing without a webhook secret.
+     */
+    public function webhook(): array
+    {
+        $items = [];
+        foreach ($this->deliveries() as [$repo, $status]) {
+            $items[] = new HealthItem(self::deliveryLevel($status), 'webhook_' . $status->outcome, $this->deliveryLabel($repo, $status));
+        }
+
+        return $items;
+    }
+
+    /**
+     * @return list<array{label: string, link: string}> Every repository whose deliveries fail now (the red notice):
+     *         its text and the settings page of its webhook on GitHub, built from the repository and the hook id.
+     */
+    public function deliveryAlerts(): array
+    {
+        $alerts = [];
+        foreach ($this->deliveries() as [$repo, $status]) {
+            if ($status->isAlert()) {
+                $link = 'https://github.com/' . rawurlencode($repo->owner) . '/' . rawurlencode($repo->name) . '/settings/hooks' . ($status->hookId > 0 ? '/' . $status->hookId : '');
+                $alerts[] = ['label' => $this->deliveryLabel($repo, $status), 'link' => $link];
+            }
+        }
+
+        return $alerts;
+    }
+
+    /** @return list<array{0: RepoName, 1: DeliveryStatus}> Effective results of the mapped repositories. */
+    private function deliveries(): array
+    {
+        if (! $this->site->webhookInUse()) {
+            return [];
+        }
+        $now = $this->env->now();
+        $results = [];
+        foreach ($this->offers->repos() as $repo) {
+            $stored = $this->state->delivery($repo);
+            if (null !== $stored) {
+                $results[] = [$repo, $stored->effective($this->state->received($repo), $now)];
+            }
+        }
+
+        return $results;
+    }
+
+    private static function deliveryLevel(DeliveryStatus $status): string
+    {
+        return match ($status->outcome) {
+            DeliveryStatus::FAILING, DeliveryStatus::MISCONFIGURED => HealthItem::CRITICAL,
+            DeliveryStatus::NO_HOOK, DeliveryStatus::NO_PERMISSION, DeliveryStatus::UNKNOWN => HealthItem::RECOMMENDED,
+            default => HealthItem::GOOD,
+        };
+    }
+
+    private function deliveryLabel(RepoName $repo, DeliveryStatus $status): string
+    {
+        $name = $repo->full();
+        if ('' !== $status->viaHost) {
+            /* translators: 1: owner/repo, 2: host name of the webhook URL. */
+            $name = sprintf(__('%1$s (webhook for %2$s)', 'pc-theme-release'), $name, $status->viaHost);
+        }
+        $text = match ($status->outcome) {
+            /* translators: 1: owner/repo, 2: what GitHub reported. */
+            DeliveryStatus::FAILING => sprintf(__('%1$s: GitHub could not deliver the webhook to this site: %2$s.', 'pc-theme-release'), $name, self::failure($status)),
+            /* translators: 1: owner/repo, 2: what is wrong. */
+            DeliveryStatus::MISCONFIGURED => sprintf(__('%1$s: the webhook on GitHub is misconfigured: %2$s.', 'pc-theme-release'), $name, self::misconfiguration($status)),
+            /* translators: 1: owner/repo, 2: the webhook URL of this site. */
+            DeliveryStatus::NO_HOOK => sprintf(__('%1$s: no webhook on GitHub points at this site (%2$s). Updates arrive only with the 12-hour check and Check now.', 'pc-theme-release'), $name, rest_url(Keys::REST_NAMESPACE . '/webhook')),
+            /* translators: %s: owner/repo. */
+            DeliveryStatus::NO_PERMISSION => sprintf(__('%s: the token cannot read the webhooks of this repository, so failed deliveries are not shown. Give the token Webhooks: Read-only; the token owner needs admin access to the repository.', 'pc-theme-release'), $name),
+            /* translators: 1: owner/repo, 2: date and time. */
+            DeliveryStatus::UNKNOWN => sprintf(__('%1$s: webhook delivery status unknown: last read from GitHub on %2$s, more than 48 hours ago.', 'pc-theme-release'), $name, Environment::date('Y-m-d H:i', $status->checkedAt)),
+            /* translators: %s: owner/repo. */
+            DeliveryStatus::NO_DELIVERIES => sprintf(__('%s: GitHub lists no webhook delivery to this site in the last 3 days.', 'pc-theme-release'), $name),
+            /* translators: 1: owner/repo, 2: date and time. */
+            default => sprintf(__('%1$s: the last webhook delivery to this site succeeded (%2$s).', 'pc-theme-release'), $name, Environment::date('Y-m-d H:i', $status->lastDeliveryAt)),
+        };
+        if (DeliveryStatus::UNKNOWN === $status->outcome) {
+            return $text;
+        }
+        if (! $status->isAlert()) {
+            /* translators: 1: the finding, 2: date and time. */
+            return sprintf(__('%1$s Checked: %2$s.', 'pc-theme-release'), $text, Environment::date('Y-m-d H:i', $status->checkedAt));
+        }
+        $lastOk = $status->lastOkAt > 0 ? Environment::date('Y-m-d H:i', $status->lastOkAt) : __('none among the last 10 deliveries', 'pc-theme-release');
+
+        /* translators: 1: the finding, 2: date and time or "none", 3: date and time. */
+        return sprintf(__('%1$s Last successful delivery: %2$s. Checked: %3$s.', 'pc-theme-release'), $text, $lastOk, Environment::date('Y-m-d H:i', $status->checkedAt));
+    }
+
+    /** GitHub own words for the failed delivery, with its HTTP status code. */
+    private static function failure(DeliveryStatus $status): string
+    {
+        if (in_array(DeliveryStatus::INACTIVE, $status->problems, true)) {
+            return __('the webhook is disabled (inactive) on GitHub', 'pc-theme-release');
+        }
+        /* translators: %d: HTTP status code. */
+        $code = $status->statusCode > 0 ? sprintf(__('HTTP %d', 'pc-theme-release'), $status->statusCode) : __('no HTTP response', 'pc-theme-release');
+
+        return '' === $status->reason ? $code : $status->reason . ' (' . $code . ')';
+    }
+
+    private static function misconfiguration(DeliveryStatus $status): string
+    {
+        $parts = [];
+        if (in_array(DeliveryStatus::NO_TAG_EVENTS, $status->problems, true)) {
+            $parts[] = __('it sends neither "Branch or tag creation" nor "Pushes" events', 'pc-theme-release');
+        }
+        if (in_array(DeliveryStatus::NOT_JSON, $status->problems, true)) {
+            $parts[] = __('its content type is not application/json', 'pc-theme-release');
+        }
+
+        return implode('; ', $parts);
     }
 
     /** @param list<HealthItem> $items The plugin screen shows the server-cron hint after these findings. */

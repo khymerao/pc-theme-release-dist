@@ -8,7 +8,7 @@ use ProCoders\ThemeRelease\Domain\Status\Health;
 use ProCoders\ThemeRelease\Domain\Status\HealthItem;
 
 /**
- * Three direct Site Health tests (Tools → Site Health is admin-only in core).
+ * Four direct Site Health tests (Tools → Site Health is admin-only in core).
  */
 final class Module
 {
@@ -17,6 +17,7 @@ final class Module
         'pc_theme_release_config' => 'configTest',
         'pc_theme_release_cron' => 'cronTest',
         'pc_theme_release_repos' => 'reposTest',
+        'pc_theme_release_webhook' => 'webhookTest',
     ];
 
     /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
@@ -99,11 +100,23 @@ final class Module
         return self::result('pc_theme_release_repos', $this->health->repos());
     }
 
+    /** @return array<string, mixed> Webhook deliveries to this site, as the last check read them from GitHub. */
+    public function webhookTest(): array
+    {
+        $items = $this->health->webhook();
+        if ([] === $items) {
+            $items[] = new HealthItem(HealthItem::GOOD, 'webhook_not_checked', __('Nothing to report: webhook deliveries are read from GitHub by the 12-hour check and Check now while a webhook secret is set.', 'pc-theme-release'));
+        }
+
+        return self::result('pc_theme_release_webhook', $items);
+    }
+
     private static function label(string $test): string
     {
         return match ($test) {
             'pc_theme_release_config' => __('ProCoders Theme Release configuration', 'pc-theme-release'),
             'pc_theme_release_cron' => __('ProCoders Theme Release scheduled check', 'pc-theme-release'),
+            'pc_theme_release_webhook' => __('ProCoders Theme Release webhook deliveries', 'pc-theme-release'),
             default => __('ProCoders Theme Release repositories', 'pc-theme-release'),
         };
     }

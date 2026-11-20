@@ -162,6 +162,7 @@ final class Module
         if (null !== $refusal) {
             return $refusal;
         }
+        $this->recordReceipt($payload);
 
         return $this->dispatch((string) $request->get_header('x_github_event'), $payload);
     }
@@ -210,6 +211,27 @@ final class Module
         $this->storage->setTransient(self::checkKey($repo), 1, self::CHECK_INTERVAL);
 
         return WebhookResult::ok();
+    }
+
+    /**
+     * A first-seen valid delivery (any event, ping included) proves GitHub reaches this site for that repository:
+     * its time clears an older failed delivery of that repository (spec call 13). Only for a mapped repository.
+     *
+     * @param array<mixed> $payload
+     */
+    private function recordReceipt(array $payload): void
+    {
+        $repo = $this->repoFrom($payload);
+        $mapping = null === $repo ? null : $this->mappings->findByRepo($repo);
+        if (null === $mapping) {
+            return;
+        }
+        // A delivery that names another repository id than the stored one is not about the mapped repository.
+        $id = is_array($payload['repository'] ?? null) ? ($payload['repository']['id'] ?? null) : null;
+        if (null !== $mapping->repoId && is_int($id) && $id !== $mapping->repoId) {
+            return;
+        }
+        $this->state->setReceived($mapping->repo, $this->env->now());
     }
 
     private static function checkKey(RepoName $repo): string

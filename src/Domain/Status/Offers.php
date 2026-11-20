@@ -6,6 +6,7 @@ namespace ProCoders\ThemeRelease\Domain\Status;
 
 use ProCoders\ThemeRelease\Core\Config\Channel;
 use ProCoders\ThemeRelease\Core\Config\SiteContext;
+use ProCoders\ThemeRelease\Core\GitHub\RepoName;
 use ProCoders\ThemeRelease\Core\Support\Keys;
 use ProCoders\ThemeRelease\Domain\Release\ChannelRelease;
 use ProCoders\ThemeRelease\Domain\Release\RepoState;
@@ -42,6 +43,12 @@ final class Offers
         }
 
         return $state;
+    }
+
+    /** @return list<RepoName> The mapped repositories, without reading any theme (cheap enough for every admin screen). */
+    public function repos(): array
+    {
+        return array_values(array_map(static fn (Mapping $mapping): RepoName => $mapping->repo, $this->mappings->all()));
     }
 
     /** @return array<string, ThemeStatus> */

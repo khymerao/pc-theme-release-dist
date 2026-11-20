@@ -29,6 +29,8 @@ return array(
     'ProCoders\\ThemeRelease\\Core\\Support\\ValidationError' => $baseDir . '/src/Core/Support/ValidationError.php',
     'ProCoders\\ThemeRelease\\Domain\\Release\\ChannelRelease' => $baseDir . '/src/Domain/Release/ChannelRelease.php',
     'ProCoders\\ThemeRelease\\Domain\\Release\\Checker' => $baseDir . '/src/Domain/Release/Checker.php',
+    'ProCoders\\ThemeRelease\\Domain\\Release\\DeliveryCheck' => $baseDir . '/src/Domain/Release/DeliveryCheck.php',
+    'ProCoders\\ThemeRelease\\Domain\\Release\\DeliveryStatus' => $baseDir . '/src/Domain/Release/DeliveryStatus.php',
     'ProCoders\\ThemeRelease\\Domain\\Release\\RepoState' => $baseDir . '/src/Domain/Release/RepoState.php',
     'ProCoders\\ThemeRelease\\Domain\\Release\\SemVer' => $baseDir . '/src/Domain/Release/SemVer.php',
     'ProCoders\\ThemeRelease\\Domain\\Release\\StateStore' => $baseDir . '/src/Domain/Release/StateStore.php',

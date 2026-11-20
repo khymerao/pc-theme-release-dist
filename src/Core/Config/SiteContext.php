@@ -70,6 +70,15 @@ final class SiteContext
     }
 
     /**
+     * A usable webhook secret is set, so the site means to receive deliveries: the same answer the webhook
+     * endpoint uses to accept them. Gates the delivery check and its alerts.
+     */
+    public function webhookInUse(): bool
+    {
+        return null !== $this->secrets->webhookSecret();
+    }
+
+    /**
      * Saves channel and branches and binds them to the current host.
      *
      * @throws ValidationError

@@ -155,7 +155,7 @@ final class ThemesTab
             echo '<option value="' . esc_attr((string) $stylesheet) . '"' . selected($keptTheme, (string) $stylesheet, false) . '>' . esc_html($name . ' (' . $stylesheet . ')') . '</option>';
         }
         echo '</select></td></tr>';
-        View::textRow('pctr-repo', 'repo', __('Repository (owner/repo)', 'pc-theme-release'), Screen::query('pctr_repo'), '', true);
+        View::textRow('pctr-repo', 'repo', __('Repository (owner/repo)', 'pc-theme-release'), Screen::query('pctr_repo'), __('A GitHub URL works too: it is trimmed to owner/repo.', 'pc-theme-release'), true);
         View::textRow('pctr-branch', 'branch', __('Branch override (optional)', 'pc-theme-release'), Screen::query('pctr_branch'), __('Empty: use the site\'s staging or production branch.', 'pc-theme-release'));
         echo '</tbody></table><p class="submit">';
         View::submit(__('Add theme', 'pc-theme-release'), 'primary', false);

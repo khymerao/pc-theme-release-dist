@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInitd6952b80ad6f59b58e97017555f0b4cb
+class ComposerStaticInit9cd19223d3d22440abd9b8678ab221f1
 {
     public static $prefixLengthsPsr4 = array (
         'P' =>
@@ -44,6 +44,8 @@ class ComposerStaticInitd6952b80ad6f59b58e97017555f0b4cb
         'ProCoders\\ThemeRelease\\Core\\Support\\ValidationError' => __DIR__ . '/../..' . '/src/Core/Support/ValidationError.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\ChannelRelease' => __DIR__ . '/../..' . '/src/Domain/Release/ChannelRelease.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\Checker' => __DIR__ . '/../..' . '/src/Domain/Release/Checker.php',
+        'ProCoders\\ThemeRelease\\Domain\\Release\\DeliveryCheck' => __DIR__ . '/../..' . '/src/Domain/Release/DeliveryCheck.php',
+        'ProCoders\\ThemeRelease\\Domain\\Release\\DeliveryStatus' => __DIR__ . '/../..' . '/src/Domain/Release/DeliveryStatus.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\RepoState' => __DIR__ . '/../..' . '/src/Domain/Release/RepoState.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\SemVer' => __DIR__ . '/../..' . '/src/Domain/Release/SemVer.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\StateStore' => __DIR__ . '/../..' . '/src/Domain/Release/StateStore.php',
@@ -84,9 +86,9 @@ class ComposerStaticInitd6952b80ad6f59b58e97017555f0b4cb
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInitd6952b80ad6f59b58e97017555f0b4cb::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInitd6952b80ad6f59b58e97017555f0b4cb::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInitd6952b80ad6f59b58e97017555f0b4cb::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit9cd19223d3d22440abd9b8678ab221f1::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit9cd19223d3d22440abd9b8678ab221f1::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit9cd19223d3d22440abd9b8678ab221f1::$classMap;
 
         }, null, ClassLoader::class);
     }

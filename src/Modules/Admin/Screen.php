@@ -90,6 +90,7 @@ final class Screen
         // The Health & log tab lists every check itself, so its problems are not repeated above it.
         if (Tab::Health !== $tab) {
             $this->renderProblems($items);
+            View::deliveryAlert($this->health->deliveryAlerts());
         }
         $this->renderTabs($tab);
         if (Tab::Channel === $tab) {
@@ -97,7 +98,7 @@ final class Screen
         } elseif (Tab::GitHub === $tab) {
             $this->renderGitHub();
         } elseif (Tab::Health === $tab) {
-            $this->renderHealth($items);
+            $this->renderHealth(array_merge($items, $this->health->webhook()));
         } else {
             $this->themes->render($input);
         }

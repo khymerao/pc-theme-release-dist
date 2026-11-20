@@ -242,5 +242,6 @@ final class Module
                 esc_html__('Open settings', 'pc-theme-release')
             );
         }
+        View::deliveryAlert($this->health->deliveryAlerts());
     }
 }
