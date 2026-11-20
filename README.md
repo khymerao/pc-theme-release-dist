@@ -84,6 +84,9 @@ that points at this site (two API calls per repository).
 - Multisite: main site only.
 - Cloned database: confirm the site again; the copied token and secret are deleted, enter new ones. With
   `PC_THEME_RELEASE_CHANNEL` they stay: replace them.
+- Tunnels that rewrite the host in saved options (Local Live Link / ngrok): handled; the plugin checks every option it
+  saves and writes it again when a filter changed it. Opened under another host (the tunnel, then `client.local`), the
+  site asks you to confirm its address again.
 - Basic Auth staging: exempt `/wp-json/pc-theme-release/v1/webhook` in `.htaccess` or nginx; IP lists from
   `api.github.com/meta` (`hooks`).
 - Create webhook sends the webhook secret to `api.github.com` in the request body and never logs it; the plugin log

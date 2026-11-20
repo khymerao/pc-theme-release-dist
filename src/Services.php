@@ -43,7 +43,13 @@ final class Services
 
     public function storage(): Storage
     {
-        return $this->storage ??= new Storage();
+        return $this->storage ??= new Storage($this->recordRewrite(...));
+    }
+
+    /** An option a filter rewrote even after the repair write: logged by key only (option values hold secrets). */
+    private function recordRewrite(string $key): void
+    {
+        $this->log()->add('option_rewritten', $key);
     }
 
     public function env(): Environment

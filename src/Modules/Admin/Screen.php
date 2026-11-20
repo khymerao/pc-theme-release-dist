@@ -86,7 +86,9 @@ final class Screen
         $tab = Tab::fromQuery(self::query('tab'));
         $items = array_merge($this->health->config(), $this->health->cron());
         $this->renderMessage();
-        $this->renderSetup();
+        if ($this->site->hostChanged()) {
+            $this->renderHostConfirmation();
+        }
         // The Health & log tab lists every check itself, so its problems are not repeated above it.
         if (Tab::Health !== $tab) {
             $this->renderProblems($items);
@@ -175,29 +177,6 @@ final class Screen
     }
 
     /** The setup steps until a channel is chosen, and the host confirmation after a host change. */
-    private function renderSetup(): void
-    {
-        $hostChanged = $this->site->hostChanged();
-        if (null === $this->site->channel() && ! $hostChanged) {
-            echo '<h2>' . esc_html__('Set up', 'pc-theme-release') . '</h2><ol>';
-            // Each step links to the tab where it is done.
-            $steps = [
-                [Tab::Channel, __('Choose the channel of this site.', 'pc-theme-release')],
-                [Tab::GitHub, __('Set the GitHub token (fine-grained, Contents: read and Metadata: read on the theme repositories).', 'pc-theme-release')],
-                [Tab::GitHub, __('Generate the webhook secret.', 'pc-theme-release')],
-                [Tab::Themes, __('Add each theme and its repository.', 'pc-theme-release')],
-                [Tab::GitHub, __('In each GitHub repository add the webhook URL and secret (content type application/json, events: Branch or tag creation, Pushes).', 'pc-theme-release')],
-            ];
-            foreach ($steps as [$tab, $step]) {
-                echo '<li><a href="' . esc_url($tab->url()) . '">' . esc_html($step) . '</a></li>';
-            }
-            echo '</ol>';
-        }
-        if ($this->site->hostChanged()) {
-            $this->renderHostConfirmation();
-        }
-    }
-
     /** @param list<HealthItem> $items */
     private function renderProblems(array $items): void
     {
