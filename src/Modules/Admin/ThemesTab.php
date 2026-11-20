@@ -8,6 +8,7 @@ use ProCoders\ThemeRelease\Core\Config\SiteContext;
 use ProCoders\ThemeRelease\Core\Support\Environment;
 use ProCoders\ThemeRelease\Core\Support\ValidationError;
 use ProCoders\ThemeRelease\Domain\Release\ChannelRelease;
+use ProCoders\ThemeRelease\Domain\Release\StateStore;
 use ProCoders\ThemeRelease\Domain\Status\Offers;
 use ProCoders\ThemeRelease\Domain\Status\ThemeStatus;
 use ProCoders\ThemeRelease\Domain\Theme\Themes;
@@ -24,6 +25,7 @@ final class ThemesTab
         private readonly Offers $offers,
         private readonly Themes $themes,
         private readonly InstallFlow $installs,
+        private readonly StateStore $state,
     ) {
     }
 
@@ -39,7 +41,7 @@ final class ThemesTab
             // Core's list table is loaded only here, right before the table is built (not on other tabs or views).
             require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
         }
-        $table = new ThemesListTable($statuses, $this->themes, self::installsAllowed(), $this->addUrl($statuses), Screen::query('edit'), Screen::query('mode'));
+        $table = new ThemesListTable($statuses, $this->themes, self::installsAllowed(), $this->addUrl($statuses), $this->webhookCreatable($statuses), Screen::query('edit'), Screen::query('mode'), Screen::query('webhook'));
         $table->prepare_items();
         $table->display();
         if (! self::installsAllowed()) {
@@ -122,6 +124,30 @@ final class ThemesTab
             return;
         }
         self::renderInstallResult($result);
+    }
+
+    /**
+     * The themes that get Create webhook (spec call 1): a webhook secret is set (a wp-config constant counts) and the
+     * last delivery check of the repository found no hook of this site (nothing stored, no hook, no permission,
+     * unknown, or only another host hook). The stored outcome counts, not its 48-hour display age.
+     *
+     * @param array<string, ThemeStatus> $statuses
+     * @return list<string> stylesheets
+     */
+    private function webhookCreatable(array $statuses): array
+    {
+        if (! $this->site->webhookInUse()) {
+            return [];
+        }
+        $creatable = [];
+        foreach ($statuses as $status) {
+            $stored = $this->state->delivery($status->mapping->repo);
+            if (null === $stored || ! $stored->knowsHook()) {
+                $creatable[] = $status->mapping->stylesheet;
+            }
+        }
+
+        return $creatable;
     }
 
     /**

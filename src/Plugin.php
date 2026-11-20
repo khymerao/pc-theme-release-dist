@@ -31,7 +31,7 @@ final class Plugin
         WebhookModule::hook(static fn (): WebhookModule => new WebhookModule($s->site(), $s->secrets(), $s->checker(), $s->state(), $s->log(), $s->storage(), $s->env(), $s->mappings()));
         HealthModule::hook(static fn (): HealthModule => new HealthModule($s->health()));
         if (is_admin()) {
-            AdminModule::hook(static fn (): AdminModule => new AdminModule($s->site(), $s->secrets(), $s->offers(), $s->themes(), $s->update()->installs(), $s->health(), $s->log(), $s->mappings(), $s->state(), $s->checker(), $s->env()));
+            AdminModule::hook(static fn (): AdminModule => new AdminModule($s->site(), $s->secrets(), $s->offers(), $s->themes(), $s->update()->installs(), $s->health(), $s->log(), $s->mappings(), $s->state(), $s->checker(), $s->env(), $s->github()));
         }
     }
 }

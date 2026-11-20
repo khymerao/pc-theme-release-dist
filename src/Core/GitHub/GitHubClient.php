@@ -36,6 +36,14 @@ final class GitHubClient
     private const string MOVED_PATTERN = '#^https://api\.github\.com/repositories/[1-9][0-9]{0,19}(?:/[A-Za-z0-9._~%/-]*)?(?:\?[^\#\s]*)?$#';
     /** The codeload path of a zipball: /{owner}/{repo}/legacy.zip/{sha} (or /zip/). */
     private const string CODELOAD_PATH = '#^/([^/]+)/([^/]+)/(?:legacy\.)?zip/([0-9a-f]{40})$#';
+    /** Longest kept GitHub validation text (422), in characters, before the caller cleans it. */
+    private const int MAX_MESSAGE = 1000;
+
+    /**
+     * A token given for one action (Create webhook) instead of the saved one: held only by this clone, for this
+     * request, never stored. Its answers neither read nor write the saved token rate-limit and expiry state.
+     */
+    private ?string $oneTimeToken = null;
 
     public function __construct(
         private readonly HttpClient $http,
@@ -43,6 +51,15 @@ final class GitHubClient
         private readonly Storage $storage,
         private readonly Environment $env,
     ) {
+    }
+
+    /** A client for this request that sends $token instead of the saved token (nothing is stored). */
+    public function withToken(string $token): self
+    {
+        $client = clone $this;
+        $client->oneTimeToken = $token;
+
+        return $client;
     }
 
     /** The package URL core is given for one commit of a repository. */
@@ -251,6 +268,82 @@ final class GitHubClient
         return $deliveries;
     }
 
+    /**
+     * Creates the repository webhook: POST /repos/{o}/{r}/hooks with the secret in the JSON body only. A renamed
+     * repository's redirect to api.github.com/repositories/{id} is repeated once (same body); any other redirect
+     * sends nothing more. 201 gives the new hook id; 422 is GitHub's refusal: "duplicate" when GitHub says the hook
+     * already exists, else "rejected" with GitHub's text (not cleaned here, at most MAX_MESSAGE bytes).
+     *
+     * @return array{result: 'created'|'duplicate'|'rejected', id: int, message: string}
+     *
+     * @throws GitHubError Any other answer (401, 403, 404, rate limit, 5xx, transport, foreign redirect, bad 201).
+     */
+    public function createHook(RepoName $repo, string $url, string $secret): array
+    {
+        $body = (string) wp_json_encode([
+            'name' => 'web',
+            'active' => true,
+            'events' => ['create', 'push'],
+            'config' => ['url' => $url, 'content_type' => 'json', 'secret' => $secret, 'insecure_ssl' => '0'],
+        ]);
+        $response = $this->authenticatedPost(self::API_BASE . $repo->apiPath() . '/hooks', $body);
+        $moved = self::movedTo($response);
+        if (null !== $moved) {
+            $response = $this->authenticatedPost($moved, $body);
+        }
+        $status = $response['status'];
+        if (201 === $status) {
+            $data = json_decode($response['body'], true);
+            $id = is_array($data) ? ($data['id'] ?? null) : null;
+            if (! is_int($id) || $id <= 0) {
+                throw new GitHubError(GitHubErrorKind::BadResponse, $status);
+            }
+
+            return ['result' => 'created', 'id' => $id, 'message' => ''];
+        }
+        if (in_array($status, self::REDIRECTS, true)) {
+            throw new GitHubError(GitHubErrorKind::ForeignRedirect, $status);
+        }
+        if (422 === $status) {
+            $texts = self::validationTexts($response['body']);
+            foreach ($texts as $text) {
+                if (str_contains(strtolower($text), 'already exists')) {
+                    return ['result' => 'duplicate', 'id' => 0, 'message' => ''];
+                }
+            }
+
+            return ['result' => 'rejected', 'id' => 0, 'message' => substr(implode(' ', $texts), 0, self::MAX_MESSAGE)];
+        }
+        $this->raiseFor($response);
+    }
+
+    /**
+     * GitHub's own words of a 422: the top `message` and each `errors[].message` (or the error code).
+     *
+     * @return list<string>
+     */
+    private static function validationTexts(string $body): array
+    {
+        $data = json_decode($body, true);
+        if (! is_array($data)) {
+            return [];
+        }
+        $texts = [];
+        $errors = is_array($data['errors'] ?? null) ? $data['errors'] : [];
+        foreach ($errors as $error) {
+            $text = is_array($error) ? ($error['message'] ?? $error['code'] ?? null) : $error;
+            if (is_string($text) && '' !== trim($text)) {
+                $texts[] = trim($text);
+            }
+        }
+        $message = $data['message'] ?? null;
+        if (is_string($message) && '' !== trim($message) && ([] === $texts || 'validation failed' !== strtolower(trim($message)))) {
+            array_unshift($texts, trim($message));
+        }
+
+        return $texts;
+    }
+
     /** Unix time of an ISO 8601 time GitHub sends (UTC when it has no offset), or null. */
     private static function utcTime(string $value): ?int
     {
@@ -373,6 +466,39 @@ final class GitHubClient
      */
     private function authenticatedGet(string $url, ?string $saveTo, int $timeout): array
     {
+        $response = $this->http->get($url, self::headers() + ['Authorization' => 'Bearer ' . $this->token()], $timeout, $saveTo, self::limit($saveTo));
+        $this->remember($response);
+
+        return self::sized($response, $saveTo);
+    }
+
+    /**
+     * A JSON POST that carries the token, under the same rules as authenticatedGet().
+     *
+     * @return array{status: int, headers: array<string, string>, body: string}
+     *
+     * @throws GitHubError
+     */
+    private function authenticatedPost(string $url, string $body): array
+    {
+        $headers = self::headers() + ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $this->token()];
+        $response = $this->http->post($url, $headers, $body, self::API_TIMEOUT, self::MAX_API_BYTES);
+        $this->remember($response);
+
+        return self::sized($response, null);
+    }
+
+    /**
+     * The one-time token, else the saved one; refused without one, and (saved token only) while the stored
+     * rate limit lasts.
+     *
+     * @throws GitHubError
+     */
+    private function token(): string
+    {
+        if (null !== $this->oneTimeToken) {
+            return $this->oneTimeToken;
+        }
         $token = $this->secrets->token();
         if (null === $token || '' === $token) {
             throw new GitHubError(GitHubErrorKind::NoToken, 0);
@@ -380,10 +506,8 @@ final class GitHubClient
         if ($this->rateLimited()) {
             throw new GitHubError(GitHubErrorKind::RateLimited, 0);
         }
-        $response = $this->http->get($url, self::headers() + ['Authorization' => 'Bearer ' . $token], $timeout, $saveTo, self::limit($saveTo));
-        $this->remember($response);
 
-        return self::sized($response, $saveTo);
+        return $token;
     }
 
     /**
@@ -451,6 +575,9 @@ final class GitHubClient
     /** @param array{status: int, headers: array<string, string>, body: string} $response */
     private function remember(array $response): void
     {
+        if (null !== $this->oneTimeToken) {
+            return; // Another token: its expiry and limits are not the saved token's.
+        }
         $expiry = self::tokenExpiry($response['headers']['github-authentication-token-expiration'] ?? null);
         if (null !== $expiry && $expiry !== $this->stateInt(Keys::TOKEN_EXPIRES_AT)) {
             $this->setStateInt(Keys::TOKEN_EXPIRES_AT, $expiry);
@@ -496,6 +623,22 @@ final class GitHubClient
         return null;
     }
 
+    /**
+     * Whether a 403/429 is GitHub's rate limit: the stored state for the saved token (written by remember()), the
+     * answer's own headers for a one-time token.
+     *
+     * @param array{status: int, headers: array<string, string>, body: string} $response
+     */
+    private function limitedBy(array $response): bool
+    {
+        if (null === $this->oneTimeToken) {
+            return $this->rateLimited();
+        }
+        $headers = $response['headers'];
+
+        return 429 === $response['status'] || isset($headers['retry-after']) || '0' === ($headers['x-ratelimit-remaining'] ?? null);
+    }
+
     private static function isLimitStatus(int $status): bool
     {
         return in_array($status, [403, 429], true);
@@ -512,7 +655,7 @@ final class GitHubClient
         $kind = match (true) {
             401 === $status => GitHubErrorKind::Unauthorized,
             404 === $status => GitHubErrorKind::NotFound,
-            self::isLimitStatus($status) && $this->rateLimited() => GitHubErrorKind::RateLimited,
+            self::isLimitStatus($status) && $this->limitedBy($response) => GitHubErrorKind::RateLimited,
             403 === $status => GitHubErrorKind::Forbidden,
             $status >= 500 => GitHubErrorKind::Server,
             default => GitHubErrorKind::BadResponse,

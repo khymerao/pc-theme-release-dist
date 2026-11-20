@@ -57,6 +57,15 @@ final readonly class DeliveryStatus
     }
 
     /**
+     * The last check found this site own hook (exact URL, not a hook on another host): ok, failing, misconfigured
+     * or no deliveries. The Create webhook action is offered only while this is false (spec call 1).
+     */
+    public function knowsHook(): bool
+    {
+        return '' === $this->viaHost && in_array($this->outcome, [self::OK, self::FAILING, self::MISCONFIGURED, self::NO_DELIVERIES], true);
+    }
+
+    /**
      * What is shown now: unknown once the result is older than 48 hours; a failure is shown as ok when the site
      * received a valid delivery for this repository strictly later than the failed delivery (spec call 13).
      */

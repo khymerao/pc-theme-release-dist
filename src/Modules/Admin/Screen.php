@@ -130,7 +130,48 @@ final class Screen
                 return; // Nothing is failing now (reload after a later success, or a typed URL).
             }
         }
+        if ($this->renderWebhookMessage($code)) {
+            return;
+        }
         View::notice($code->level(), $code->message(), true, $details);
+    }
+
+    /**
+     * The Create webhook answers: the theme named by `pctr_theme` must be managed (else the plain message); the link
+     * comes from the stored hook id; GitHub's refusal text is read once from this user's transient and escaped.
+     */
+    private function renderWebhookMessage(MessageCode $code): bool
+    {
+        $links = [
+            MessageCode::WebhookCreated->value => __('Webhook settings on GitHub', 'pc-theme-release'),
+            MessageCode::WebhookExists->value => __('Webhook settings on GitHub', 'pc-theme-release'),
+            MessageCode::WebhookDuplicate->value => __('Webhooks of this repository on GitHub', 'pc-theme-release'),
+            MessageCode::WebhookForbidden->value => __('Add it by hand: webhooks of this repository on GitHub', 'pc-theme-release'),
+            MessageCode::WebhookRejected->value => __('Webhooks of this repository on GitHub', 'pc-theme-release'),
+        ];
+        $label = $links[$code->value] ?? null;
+        if (null === $label) {
+            return false;
+        }
+        $details = [];
+        if (MessageCode::WebhookRejected === $code) {
+            $key = Keys::WEBHOOK_MESSAGE_PREFIX . get_current_user_id();
+            $text = get_transient($key);
+            delete_transient($key);
+            $details[] = is_string($text) && '' !== $text ? $text : __('(GitHub gave no reason, or it was already shown.)', 'pc-theme-release');
+        }
+        $status = $this->offers->all()[self::query('pctr_theme')] ?? null;
+        if (null === $status) {
+            View::notice($code->level(), $code->message(), true, $details);
+            return true;
+        }
+        $repo = $status->mapping->repo;
+        $url = in_array($code, [MessageCode::WebhookCreated, MessageCode::WebhookExists], true) ? $this->health->hookLink($repo) : Health::hooksPage($repo);
+        /* translators: %s: owner/repo. */
+        $details[] = sprintf(__('Repository: %s', 'pc-theme-release'), $repo->full());
+        View::linkNotice($code->level(), $code->message(), $details, $url, $label);
+
+        return true;
     }
 
     /** The setup steps until a channel is chosen, and the host confirmation after a host change. */

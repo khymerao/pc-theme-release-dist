@@ -8,14 +8,37 @@ Themes from private GitHub repos as normal WordPress updates. WordPress 6.4+, PH
 
 1. **Channel**: *Staging* or *Production*.
 2. **GitHub** -> token. GitHub: *Settings -> Developer settings -> Personal access tokens -> Fine-grained tokens ->
-   Generate new token*.
-   Owner: the organisation. Repositories: only this site's themes. Permissions: **Contents: Read-only**,
-   **Metadata: Read-only**, and **Webhooks: Read-only** for delivery alerts (optional; reading webhooks also needs
-   the token owner to be a repository admin). One token per site. Only fine-grained tokens (`github_pat_…`) are accepted.
-3. **GitHub** -> **Generate a new webhook secret**. Shown once.
+   Generate new token*. Only fine-grained tokens (`github_pat_…`) are accepted. One token per site.
+   - **Resource owner**: the organisation (or user) that owns the theme repositories. An organisation must allow
+     fine-grained tokens; if it requires approval, an organisation owner approves the token (*Organisation settings ->
+     Personal access tokens -> Pending requests*). Until then GitHub answers 403 / 404 for the private repositories.
+   - **Repository access**: *Only select repositories*, including every theme repository of this site.
+   - **Repository permissions**: **Contents: Read-only**, **Metadata: Read-only**, and **Webhooks: Read-only** for
+     delivery alerts (optional).
+   - **Account permissions**: none.
+   - The **token owner** must be an admin of the repository to read or create its webhooks.
+3. **GitHub** -> **Generate a new webhook secret**. The plugin creates the secret and shows it once: copy it now if you
+   set up webhooks by hand in step 5. Generating again replaces it, and every webhook then needs the new one.
 4. **Themes** -> **Add theme** (`owner/repo` or the GitHub URL), then **Record installed tag**. Public repositories are refused.
-5. Each theme repo: *Settings -> Webhooks -> Add webhook*. URL from the **GitHub** tab, content type
-   **application/json**, the secret, events **Branch or tag creation** and **Pushes**.
+5. The webhook of each theme repository, one of:
+   - **Create webhook…** (link under the repository on **Themes**, shown while no webhook of this site is known): paste a
+     **one-time token** and click **Create webhook**. The plugin reads the repository webhooks, and creates one only
+     if none points at this site: URL from the **GitHub** tab, `application/json`, the secret from step 3, events
+     **Branch or tag creation** and **Pushes**. The token is used for this click only and never saved. Needs an
+     `https://` site and a confirmed site address. The one-time token: fine-grained, the same **resource owner** and
+     **repository access** as above, **Repository permissions: Webhooks: Read and write** and nothing else (GitHub
+     adds Metadata: Read-only; tick it if the form asks), **Account permissions: none**, **Expiration**: the shortest
+     (1 day, or a custom date). Its owner must be a repository admin, and a pending organisation approval gives 403.
+     **Revoke it on GitHub afterwards.** The saved token from step 2 stays read-only.
+   - By hand: *Settings -> Webhooks -> Add webhook*. URL from the **GitHub** tab, content type **application/json**,
+     **Secret**: the secret from step 3 (generated on the plugin page, not in GitHub), events **Branch or tag
+     creation** and **Pushes**.
+
+   Create webhook messages: *needs Webhooks: Read and write … repository admin* (403 / 404: wrong permission, not an
+   admin, token pending approval or for another resource owner); *GitHub did not accept the one-time token* (wrong,
+   expired or revoked); *already points at this site* / *already exists* (nothing created); *GitHub refused* (GitHub's
+   own reason, e.g. a URL it cannot reach); *rate limit*; *could not be reached* (try again: an existing webhook is
+   found first, so none is created twice).
 
 Optional, in `wp-config.php`:
 
@@ -63,4 +86,7 @@ that points at this site (two API calls per repository).
   `PC_THEME_RELEASE_CHANNEL` they stay: replace them.
 - Basic Auth staging: exempt `/wp-json/pc-theme-release/v1/webhook` in `.htaccess` or nginx; IP lists from
   `api.github.com/meta` (`hooks`).
+- Create webhook sends the webhook secret to `api.github.com` in the request body and never logs it; the plugin log
+  keeps the repository and HTTP status only. Third-party HTTP-logging plugins may record request bodies: turn them off
+  while you click it.
 - Uninstall removes plugin data, never theme files. Revoke the token and delete the webhooks in GitHub.

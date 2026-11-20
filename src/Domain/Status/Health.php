@@ -151,12 +151,28 @@ final class Health
         $alerts = [];
         foreach ($this->deliveries() as [$repo, $status]) {
             if ($status->isAlert()) {
-                $link = 'https://github.com/' . rawurlencode($repo->owner) . '/' . rawurlencode($repo->name) . '/settings/hooks' . ($status->hookId > 0 ? '/' . $status->hookId : '');
-                $alerts[] = ['label' => $this->deliveryLabel($repo, $status), 'link' => $link];
+                $alerts[] = ['label' => $this->deliveryLabel($repo, $status), 'link' => self::hooksPage($repo, $status->hookId)];
             }
         }
 
         return $alerts;
+    }
+
+    /**
+     * The repository webhook settings page on GitHub, or one hook settings page when $hookId > 0; built from the
+     * mapped name and an integer id only, never from an API URL.
+     */
+    public static function hooksPage(RepoName $repo, int $hookId = 0): string
+    {
+        return 'https://github.com/' . rawurlencode($repo->owner) . '/' . rawurlencode($repo->name) . '/settings/hooks' . ($hookId > 0 ? '/' . $hookId : '');
+    }
+
+    /** The settings page of this site stored hook of $repo (exact match only), else the repository webhooks page. */
+    public function hookLink(RepoName $repo): string
+    {
+        $stored = $this->state->delivery($repo);
+
+        return self::hooksPage($repo, null !== $stored && $stored->knowsHook() ? $stored->hookId : 0);
     }
 
     /** @return list<array{0: RepoName, 1: DeliveryStatus}> Effective results of the mapped repositories. */

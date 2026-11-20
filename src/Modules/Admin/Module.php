@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProCoders\ThemeRelease\Modules\Admin;
 
 use ProCoders\ThemeRelease\Core\Config\SiteContext;
+use ProCoders\ThemeRelease\Core\GitHub\GitHubClient;
 use ProCoders\ThemeRelease\Core\Security\Secrets;
 use ProCoders\ThemeRelease\Core\Support\Environment;
 use ProCoders\ThemeRelease\Core\Support\Keys;
@@ -52,9 +53,10 @@ final class Module
         StateStore $state,
         Checker $checker,
         Environment $env,
+        GitHubClient $github,
     ) {
-        $this->screen = new Screen($site, $secrets, $offers, $health, $log, new ThemesTab($site, $offers, $themes, $installs));
-        $this->actions = new Actions($site, $secrets, $mappings, $state, $offers, $checker, $log, $env);
+        $this->screen = new Screen($site, $secrets, $offers, $health, $log, new ThemesTab($site, $offers, $themes, $installs, $state));
+        $this->actions = new Actions($site, $secrets, $mappings, $state, $offers, $checker, $log, $env, $github);
     }
 
     /**

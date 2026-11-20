@@ -6,11 +6,17 @@ namespace ProCoders\ThemeRelease\Modules\Admin;
 
 use ProCoders\ThemeRelease\Core\Config\Channel;
 use ProCoders\ThemeRelease\Core\Config\SiteContext;
+use ProCoders\ThemeRelease\Core\GitHub\GitHubClient;
+use ProCoders\ThemeRelease\Core\GitHub\GitHubError;
+use ProCoders\ThemeRelease\Core\GitHub\GitHubErrorKind;
 use ProCoders\ThemeRelease\Core\Security\SecretKind;
 use ProCoders\ThemeRelease\Core\Security\Secrets;
 use ProCoders\ThemeRelease\Core\Support\Environment;
+use ProCoders\ThemeRelease\Core\Support\Keys;
 use ProCoders\ThemeRelease\Core\Support\ValidationError;
 use ProCoders\ThemeRelease\Domain\Release\Checker;
+use ProCoders\ThemeRelease\Domain\Release\DeliveryCheck;
+use ProCoders\ThemeRelease\Domain\Release\DeliveryStatus;
 use ProCoders\ThemeRelease\Domain\Release\StateStore;
 use ProCoders\ThemeRelease\Domain\Release\StatusLog;
 use ProCoders\ThemeRelease\Domain\Release\UpdateTransient;
@@ -34,8 +40,12 @@ final class Actions
         private readonly Checker $checker,
         private readonly StatusLog $log,
         private readonly Environment $env,
+        private readonly GitHubClient $github,
     ) {
     }
+
+    /** How long GitHub's text of a refused Create webhook waits to be shown, in seconds. */
+    public const int WEBHOOK_MESSAGE_TTL = 300;
 
     /** admin_post_{action} entry point. */
     public function dispatch(): void
@@ -52,16 +62,20 @@ final class Actions
             Module::deny(400);
         }
         Module::guard($action, $input);
+        $context = [];
+        foreach ($action->contextFields() as $field) {
+            $context[$field] = $input->text($field);
+        }
         try {
             $code = $this->run($action, $input);
         } catch (ValidationError $error) {
-            $keep = [];
+            $keep = $context;
             foreach ($action->keptFields() as $field) {
                 $keep[$field] = $input->text($field);
             }
             Module::redirect(MessageCode::fromReason($error->reason), $action->tab(), $keep, $action->errorView());
         }
-        Module::redirect($code, $action->tab());
+        Module::redirect($code, $action->tab(), $context);
     }
 
     /** @throws ValidationError */
@@ -79,6 +93,7 @@ final class Actions
             Action::SeedTag => $this->seedTag($input->text('theme'), $input->text('tag')),
             Action::Unfreeze => $this->unfreeze($input->text('theme')),
             Action::ConfirmHost => $this->confirmHost($input),
+            Action::CreateWebhook => $this->createWebhook($input),
             default => throw new \LogicException('Not an admin-post action: ' . $action->value),
         };
     }
@@ -211,6 +226,62 @@ final class Actions
         UpdateTransient::refresh();
 
         return MessageCode::HostConfirmed;
+    }
+
+    /**
+     * Create webhook (spec calls 1-8): every precondition is checked before anything is sent; the one-time token
+     * is used by a client clone for this request only and is never stored, logged or sent back.
+     *
+     * @throws ValidationError
+     */
+    private function createWebhook(Input $input): MessageCode
+    {
+        $mapping = $this->mappings->require($input->text('theme'));
+        if ($this->site->hostChanged()) {
+            throw new ValidationError('host_changed');
+        }
+        $secret = $this->secrets->webhookSecret() ?? throw new ValidationError('webhook_no_secret');
+        // The URL the GitHub tab shows and the delivery check matches.
+        $endpoint = rest_url(Keys::REST_NAMESPACE . '/webhook');
+        if (! str_starts_with(strtolower($endpoint), 'https://')) {
+            throw new ValidationError('webhook_not_https');
+        }
+        $token = trim($input->secret('webhook_token'));
+        if (! SecretKind::Token->isValidNew($token)) {
+            throw new ValidationError('invalid_webhook_token');
+        }
+        $repo = $mapping->repo;
+        $check = new DeliveryCheck($this->github->withToken($token), $this->state, $this->env);
+        try {
+            $result = $check->create($repo, $endpoint, rest_get_url_prefix(), $secret);
+        } catch (GitHubError $error) {
+            $this->log->add('webhook_create_failed', $repo->full(), '', $error->httpStatus);
+
+            return match ($error->kind) {
+                GitHubErrorKind::NotFound, GitHubErrorKind::Forbidden => MessageCode::WebhookForbidden,
+                GitHubErrorKind::Unauthorized => MessageCode::WebhookTokenRejected,
+                GitHubErrorKind::RateLimited => MessageCode::WebhookRateLimited,
+                default => MessageCode::WebhookFailed,
+            };
+        }
+        if ('created' === $result['result']) {
+            $this->log->add('webhook_created', $repo->full(), '', 201);
+
+            return MessageCode::WebhookCreated;
+        }
+        if ('exists' === $result['result']) {
+            return MessageCode::WebhookExists;
+        }
+        $this->log->add('webhook_create_failed', $repo->full(), '', 422);
+        if ('duplicate' === $result['result']) {
+            return MessageCode::WebhookDuplicate;
+        }
+        // GitHub's words cannot travel in the URL: kept for this user's next page only (plan O4).
+        // GitHub could echo what it was sent: neither the token nor the secret is ever kept or shown.
+        $text = str_replace([$token, $secret], '[removed]', $result['message']);
+        set_transient(Keys::WEBHOOK_MESSAGE_PREFIX . get_current_user_id(), DeliveryStatus::cleanReason($text), self::WEBHOOK_MESSAGE_TTL);
+
+        return MessageCode::WebhookRejected;
     }
 
     /** @throws ValidationError */

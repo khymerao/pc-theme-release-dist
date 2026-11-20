@@ -24,6 +24,7 @@ enum Action: string
     case GenerateWebhookSecret = 'pctr_generate_webhook_secret';
     case Rollback = 'pctr_rollback';
     case SwitchChannel = 'pctr_switch_channel';
+    case CreateWebhook = 'pctr_create_webhook';
 
     /** @return list<self> The actions handled by admin-post.php, in registration order. */
     public static function adminPost(): array
@@ -57,6 +58,12 @@ enum Action: string
     public function errorView(): string
     {
         return self::AddMapping === $this ? 'add' : '';
+    }
+
+    /** @return list<string> Non-secret fields every answer carries back (the message names the theme it is about). */
+    public function contextFields(): array
+    {
+        return self::CreateWebhook === $this ? ['theme'] : [];
     }
 
     /** @return list<string> Non-secret fields shown again after a refusal. */

@@ -22,6 +22,7 @@ final class ThemesListTable extends \WP_List_Table
     // phpcs:disable PSR1.Methods.CamelCapsMethodName.NotCamelCaps -- core's WP_List_Table method names.
     private const string MODE_ROLLBACK = 'rollback';
     private const string MODE_RECORD = 'record';
+    private const string MODE_WEBHOOK = 'webhook';
 
     /** Stylesheet of the theme whose inline row is open ('' when none) and the row's mode. */
     private readonly string $editing;
@@ -30,19 +31,25 @@ final class ThemesListTable extends \WP_List_Table
     /**
      * @param array<string, ThemeStatus> $statuses Keyed by stylesheet.
      * @param string                     $addUrl   Where "Add theme" leads; '' when every installed theme is managed.
+     * @param list<string>               $webhookCreatable Stylesheets that get Create webhook (ThemesTab decides).
      * @param string                     $edit     The display-only `edit` query arg (honoured only when valid).
      * @param string                     $mode     The display-only `mode` query arg.
+     * @param string                     $webhook  The display-only `webhook` query arg: the theme whose Create webhook row is open.
      */
     public function __construct(
         private readonly array $statuses,
         private readonly Themes $themes,
         private readonly bool $installsAllowed,
         private readonly string $addUrl,
+        private readonly array $webhookCreatable,
         string $edit,
         string $mode,
+        string $webhook = '',
     ) {
         parent::__construct(['plural' => 'pctr-themes', 'singular' => 'pctr-theme', 'ajax' => false]);
-        [$this->editing, $this->editMode] = $this->inlineRow($edit, $mode);
+        $webhookStatus = $this->statuses[$webhook] ?? null;
+        // Its own query arg, not edit=: the Create webhook row never stands for Change version.
+        [$this->editing, $this->editMode] = null !== $webhookStatus && $this->canCreateWebhook($webhookStatus) ? [$webhook, self::MODE_WEBHOOK] : $this->inlineRow($edit, $mode);
     }
 
     /** @return array<string, string> */
@@ -105,15 +112,19 @@ final class ThemesListTable extends \WP_List_Table
         $html = esc_html($mapping->repo->full());
         if ('' !== $mapping->branchOverride) {
             /* translators: %s: branch. */
-            $branch = sprintf(__('branch: %s (override)', 'pc-theme-release'), $mapping->branchOverride);
+            $html .= self::note(esc_html(sprintf(__('branch: %s (override)', 'pc-theme-release'), $mapping->branchOverride)));
         } elseif ('' !== $status->branch) {
             /* translators: %s: branch. */
-            $branch = sprintf(__('branch: %s (site default)', 'pc-theme-release'), $status->branch);
-        } else {
-            return $html;
+            $html .= self::note(esc_html(sprintf(__('branch: %s (site default)', 'pc-theme-release'), $status->branch)));
+        }
+        if ($this->canCreateWebhook($status)) {
+            // In this cell, not in the row actions: a third row action wraps in the Theme column and its targets
+            // come closer than WCAG 2.5.8 allows. Always visible while no hook of this site is known.
+            /* translators: %s: theme name. */
+            $html .= self::note(self::link(Tab::Themes->url(['webhook' => $mapping->stylesheet]), __('Create webhook…', 'pc-theme-release'), sprintf(__('Create webhook for %s', 'pc-theme-release'), $this->name($status))));
         }
 
-        return $html . self::note(esc_html($branch));
+        return $html;
     }
 
     public function column_installed(ThemeStatus $status): string
@@ -271,6 +282,10 @@ final class ThemesListTable extends \WP_List_Table
     {
         $stylesheet = $status->mapping->stylesheet;
         $name = $this->name($status);
+        if (self::MODE_WEBHOOK === $this->editMode) {
+            $this->renderWebhookRow($stylesheet, $name);
+            return;
+        }
         $record = self::MODE_RECORD === $this->editMode;
         // A plain cell (core's padding and type), not core's Quick Edit row: its CSS uppercases, floats and re-pads.
         echo '<tr class="pctr-inline-row" id="pctr-inline-edit"><td colspan="' . esc_attr((string) $this->get_column_count()) . '" class="colspanchange">';
@@ -305,6 +320,28 @@ final class ThemesListTable extends \WP_List_Table
         View::submit($button, 'primary', false);
         echo ' <a class="button" href="' . esc_url(Tab::Themes->url()) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a></p>'
             . '<p class="description">' . esc_html($description) . '</p></form></td></tr>';
+    }
+
+    /**
+     * The Create webhook row: a one-time token (password field, never filled in again) posted to admin-post.php.
+     */
+    private function renderWebhookRow(string $stylesheet, string $name): void
+    {
+        echo '<tr class="pctr-inline-row" id="pctr-inline-edit"><td colspan="' . esc_attr((string) $this->get_column_count()) . '" class="colspanchange">';
+        View::formStart(Action::CreateWebhook);
+        View::hidden('theme', $stylesheet);
+        /* translators: %s: theme name. */
+        echo '<p><strong>' . esc_html(sprintf(__('Create the GitHub webhook for %s', 'pc-theme-release'), $name)) . '</strong></p>'
+            . '<p><label for="pctr-webhook-token">' . esc_html__('One-time GitHub token (Webhooks: Read and write)', 'pc-theme-release') . '</label><br>'
+            . '<input type="password" class="regular-text" id="pctr-webhook-token" name="webhook_token" autocomplete="off" spellcheck="false" required aria-describedby="pctr-webhook-token-note"> ';
+        View::submit(__('Create webhook', 'pc-theme-release'), 'primary', false);
+        echo ' <a class="button" href="' . esc_url(Tab::Themes->url()) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a></p>'
+            . '<p class="description" id="pctr-webhook-token-note">' . esc_html__('Used once for this repository and not saved. Revoke it on GitHub afterwards.', 'pc-theme-release') . '</p></form></td></tr>';
+    }
+
+    private function canCreateWebhook(ThemeStatus $status): bool
+    {
+        return in_array($status->mapping->stylesheet, $this->webhookCreatable, true);
     }
 
     private function name(ThemeStatus $status): string
