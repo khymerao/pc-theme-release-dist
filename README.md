@@ -28,6 +28,7 @@ define( 'PC_THEME_RELEASE_CHANNEL', 'production' ); // or 'staging'
 
 - Staging: tag with a suffix (`v1.2.0-rc.1`) on `develop`.
 - Production: tag without a suffix (`v1.2.0`) on `main`.
+- Three or more numbers work: `v1.0.40.39`, `v1.0.40.39-rc.1`. `v1.0.40` < `v1.0.40.0` < `v1.0.40.1`.
 
 The zip is the tagged commit, so the repo root must be the theme; drop dev files with `export-ignore` in the theme's `.gitattributes`.
 
