@@ -146,12 +146,25 @@ final class InstallFlow
                 : UpdateTransient::entry($stylesheet, $target->versionLabel(), '', GitHubClient::packageUrl($mapping->repo, $target->sha), false);
             add_filter('site_transient_update_themes', [$this, 'injectPending'], 99);
 
-            return $this->core->upgrade($stylesheet);
+            return $this->core->upgrade($stylesheet, self::title($mode, $target));
         } finally {
             remove_filter('site_transient_update_themes', [$this, 'injectPending'], 99);
             $this->pendingEntry = null;
             $this->installer->clearExpected($stylesheet);
             $this->core->releaseLock();
         }
+    }
+
+    /** The upgrader screen's heading: what this install does. */
+    private static function title(InstallMode $mode, ChannelRelease $target): string
+    {
+        return match ($mode) {
+            InstallMode::Switch => sprintf(
+                /* translators: %s: tag, e.g. v1.2.0 */
+                __('Switching theme to %s', 'pc-theme-release'),
+                $target->tag
+            ),
+            default => __('Rolling back theme', 'pc-theme-release'),
+        };
     }
 }

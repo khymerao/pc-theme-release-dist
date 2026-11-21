@@ -10,8 +10,8 @@ namespace ProCoders\ThemeRelease\Modules\Update;
  */
 interface CoreUpgrader
 {
-    /** Runs core's Theme_Upgrader::upgrade() for one theme; true on success. */
-    public function upgrade(string $stylesheet): bool|\WP_Error;
+    /** Runs core's Theme_Upgrader::upgrade() for one theme under the given screen heading; true on success. */
+    public function upgrade(string $stylesheet, string $title): bool|\WP_Error;
 
     /** Takes the plugin's upgrader lock; false when another run holds it. */
     public function acquireLock(): bool;

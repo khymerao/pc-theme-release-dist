@@ -357,16 +357,16 @@ final class ThemesListTable extends \WP_List_Table
         echo '<tr class="pctr-inline-row" id="pctr-inline-edit"><td colspan="' . esc_attr((string) $this->get_column_count()) . '" class="colspanchange">';
         /* translators: %s: theme name. */
         echo '<p><strong>' . esc_html(sprintf(__('Webhook setup for %s', 'pc-theme-release'), $name)) . '</strong></p>'
-            . '<p>' . esc_html__('On GitHub, add a webhook to the repository and paste these values. Only an owner or admin of the repository can add it.', 'pc-theme-release') . '</p>'
+            . '<p>' . esc_html__('On GitHub, add a webhook to the repository and fill in its form with these values, in the same order. Only an owner or admin of the repository can add it.', 'pc-theme-release') . '</p>'
             . '<table class="form-table" role="presentation"><tbody><tr><th scope="row"><label for="pctr-payload-url">' . esc_html__('Payload URL', 'pc-theme-release') . '</label></th><td>';
         self::renderCopyField('pctr-payload-url', rest_url(Keys::REST_NAMESPACE . '/webhook'), __('Copy payload URL', 'pc-theme-release'));
-        echo '</td></tr><tr><th scope="row">' . ('' === $this->shownSecretFor($stylesheet) ? esc_html__('Secret', 'pc-theme-release') : '<label for="pctr-theme-secret">' . esc_html__('Secret', 'pc-theme-release') . '</label>') . '</th><td>';
+        echo '</td></tr><tr><th scope="row">' . esc_html__('Content type', 'pc-theme-release') . '</th><td><code>application/json</code></td></tr>'
+            . '<tr><th scope="row">' . ('' === $this->shownSecretFor($stylesheet) ? esc_html__('Secret', 'pc-theme-release') : '<label for="pctr-theme-secret">' . esc_html__('Secret', 'pc-theme-release') . '</label>') . '</th><td>';
         $this->renderSecretCell($stylesheet);
-        echo '</td></tr></tbody></table>'
-            . '<p class="description">' . esc_html__('Content type: application/json. Events: Branch or tag creation, Pushes.', 'pc-theme-release') . '</p>'
-            . '<p><a class="button button-primary" href="' . esc_url(Health::hooksPage($repo) . '/new') . '" target="_blank" rel="noopener">' . esc_html__('Open GitHub: Add webhook', 'pc-theme-release') . '</a> '
-            . '<a class="button" href="' . esc_url(Tab::Themes->url()) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a></p>'
-            . '<p id="pctr-copy-status" role="status" aria-live="polite" class="description"></p></td></tr>';
+        echo '</td></tr><tr><th scope="row">' . esc_html__('Events', 'pc-theme-release') . '</th><td>'
+            . esc_html__('Let me select individual events: Branch or tag creation, Pushes.', 'pc-theme-release') . '</td></tr></tbody></table>'
+            . '<p class="submit"><a class="button button-primary" href="' . esc_url(Health::hooksPage($repo) . '/new') . '" target="_blank" rel="noopener">' . esc_html__('Open GitHub: Add webhook', 'pc-theme-release') . '</a> &nbsp; '
+            . '<a href="' . esc_url(Tab::Themes->url()) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a></p></td></tr>';
         self::renderCopyScript();
     }
 
@@ -429,26 +429,33 @@ final class ThemesListTable extends \WP_List_Table
         return $stylesheet === $this->shown[0] ? $this->shown[1] : '';
     }
 
-    /** A read-only field and its Copy button (hidden until the script below shows it). */
+    /**
+     * A read-only field sized to its value with its Copy button on the same line (the button is hidden until the
+     * script below shows it), and a status line next to the button that announces the result of that copy.
+     */
     private static function renderCopyField(string $id, string $value, string $copyLabel): void
     {
-        echo '<input type="text" class="large-text code" id="' . esc_attr($id) . '" value="' . esc_attr($value) . '" readonly autocomplete="off" spellcheck="false"> '
-            . '<button type="button" class="button" data-pctr-copy="' . esc_attr($id) . '" aria-label="' . esc_attr($copyLabel) . '" hidden>' . esc_html__('Copy', 'pc-theme-release') . '</button>';
+        echo '<input type="text" class="code" id="' . esc_attr($id) . '" value="' . esc_attr($value) . '" size="' . esc_attr((string) max(20, strlen($value) + 2)) . '" readonly autocomplete="off" spellcheck="false"> '
+            . '<button type="button" class="button" data-pctr-copy="' . esc_attr($id) . '" aria-label="' . esc_attr($copyLabel) . '" hidden>' . esc_html__('Copy', 'pc-theme-release') . '</button> '
+            . '<span id="' . esc_attr($id . '-status') . '" class="description" role="status" aria-live="polite"></span>';
     }
 
     /**
      * Copy with the Clipboard API where the page is a secure context; else (plain http, or a refusal) the field's text
-     * is selected so Ctrl+C / Cmd+C copies it. The result is announced in the status line.
+     * is selected so Ctrl+C / Cmd+C copies it. The result shows on the button ("Copied" for two seconds) and is
+     * announced in that field's own status line.
      */
     private static function renderCopyScript(): void
     {
         $copied = wp_json_encode(__('Copied.', 'pc-theme-release'));
+        $label = wp_json_encode(__('Copied', 'pc-theme-release'));
         $manual = wp_json_encode(__('Selected: press Ctrl+C (Cmd+C on a Mac) to copy.', 'pc-theme-release'));
-        echo '<script>(function(){var done=' . $copied . ',manual=' . $manual . ';' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON-encoded fixed strings.
-            . 'document.querySelectorAll("[data-pctr-copy]").forEach(function(b){b.hidden=false;b.addEventListener("click",function(){'
-            . 'var f=document.getElementById(b.getAttribute("data-pctr-copy")),s=document.getElementById("pctr-copy-status");'
+        echo '<script>(function(){var done=' . $copied . ',label=' . $label . ',manual=' . $manual . ';' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON-encoded fixed strings.
+            . 'document.querySelectorAll("[data-pctr-copy]").forEach(function(b){var id=b.getAttribute("data-pctr-copy"),text=b.textContent;b.hidden=false;b.addEventListener("click",function(){'
+            . 'var f=document.getElementById(id),s=document.getElementById(id+"-status");'
             . 'function sel(){f.focus();f.select();s.textContent=manual;}'
-            . 'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(f.value).then(function(){s.textContent=done;},sel);}else{sel();}'
+            . 'function ok(){s.textContent=done;b.textContent=label;setTimeout(function(){b.textContent=text;s.textContent="";},2000);}'
+            . 'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(f.value).then(ok,sel);}else{sel();}'
             . '});});})();</script>';
     }
 

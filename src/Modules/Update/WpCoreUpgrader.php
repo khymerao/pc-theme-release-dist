@@ -15,7 +15,7 @@ final class WpCoreUpgrader implements CoreUpgrader
 {
     private const int LOCK_TIMEOUT = 600;
 
-    public function upgrade(string $stylesheet): bool|\WP_Error
+    public function upgrade(string $stylesheet, string $title): bool|\WP_Error
     {
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -23,7 +23,7 @@ final class WpCoreUpgrader implements CoreUpgrader
 
         $skin = new \Theme_Upgrader_Skin([
             'theme' => $stylesheet,
-            'title' => __('Rolling back theme', 'pc-theme-release'),
+            'title' => $title,
         ]);
         $result = (new \Theme_Upgrader($skin))->upgrade($stylesheet);
 
