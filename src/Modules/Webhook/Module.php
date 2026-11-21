@@ -14,12 +14,14 @@ use ProCoders\ThemeRelease\Core\Support\ValidationError;
 use ProCoders\ThemeRelease\Domain\Release\Checker;
 use ProCoders\ThemeRelease\Domain\Release\StateStore;
 use ProCoders\ThemeRelease\Domain\Release\StatusLog;
+use ProCoders\ThemeRelease\Domain\Theme\Mapping;
 use ProCoders\ThemeRelease\Domain\Theme\MappingRepository;
 
 /**
  * POST /wp-json/pc-theme-release/v1/webhook, the only public endpoint of the plugin. The payload is
  * trusted for nothing beyond "repository X changed": the plugin re-reads tags from the API itself.
- * Order (plan C9): method → size → content type → signature; only a signed delivery touches any state.
+ * Order (plan C9): method → size → content type → repository → that theme's signature; only a signed delivery
+ * touches any state.
  */
 final class Module
 {
@@ -31,6 +33,8 @@ final class Module
     public const int CHECK_INTERVAL = 60;
     /** Replay protection lasts this long. */
     public const int REPLAY_TTL = 86400;
+    /** JSON nesting read from an unsigned body; GitHub's payloads are far shallower. */
+    public const int MAX_DEPTH = 64;
     private const string UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/';
 
     /** @var (\Closure(): self)|null Builds this module (and the services it needs) on first use. */
@@ -120,6 +124,47 @@ final class Module
     /** Null when the request may proceed, else the refusal. Writes nothing. */
     public function authorize(\WP_REST_Request $request): ?WebhookResult
     {
+        $verified = $this->verify($request);
+
+        return $verified instanceof WebhookResult ? $verified : null;
+    }
+
+    /**
+     * A delivery that passed the permission check. It is authorised again here, so the callback never
+     * relies on WordPress having run the permission callback first.
+     */
+    public function process(\WP_REST_Request $request): WebhookResult
+    {
+        $verified = $this->verify($request);
+        if ($verified instanceof WebhookResult) {
+            return $verified;
+        }
+        [$mapping, $payload] = $verified;
+        $delivery = $request->get_header('x_github_delivery');
+        if (! self::isValidDeliveryId($delivery)) {
+            return WebhookResult::error(400);
+        }
+        $body = (string) $request->get_body();
+        $refusal = $this->accept((string) $delivery, $body);
+        if (null !== $refusal) {
+            return $refusal;
+        }
+        // A first-seen valid delivery (ping included) proves GitHub reaches this site for that repository: its time
+        // clears an older failed delivery of that repository (webhook alert spec call 13).
+        $this->state->setReceived($mapping->repo, $this->env->now());
+
+        return $this->dispatch((string) $request->get_header('x_github_event'), $payload, $mapping);
+    }
+
+    /**
+     * Method, size and content type first; then the unsigned body is decoded (depth-capped) only to find the managed
+     * theme(s) it names, and the signature is checked with each one's secret (per-theme secret spec call 4). The
+     * verified mapping and the decoded payload are returned, so nothing is looked up by the payload again.
+     *
+     * @return WebhookResult|array{0: Mapping, 1: array<mixed>}
+     */
+    private function verify(\WP_REST_Request $request): WebhookResult|array
+    {
         $body = (string) $request->get_body();
         // WP_REST_Server honours `?_method=` and X-HTTP-Method-Override; only a real POST may run.
         if ('POST' !== self::realMethod()) {
@@ -131,40 +176,59 @@ final class Module
         if (1 !== preg_match('#^application/json\s*(;|$)#i', trim((string) $request->get_header('content_type')))) {
             return WebhookResult::error(415);
         }
-        $secret = $this->secrets->webhookSecret();
-        if (null === $secret || null === $this->site->channel()) {
+        if (null === $this->site->channel()) {
             return WebhookResult::error(401);
         }
-        if (! self::signatureMatches($secret, $body, $request->get_header('x_hub_signature_256'))) {
+        $payload = json_decode($body, true, self::MAX_DEPTH);
+        if (! is_array($payload)) {
             return WebhookResult::error(401);
+        }
+        $header = $request->get_header('x_hub_signature_256');
+        foreach ($this->candidates($payload) as $mapping) {
+            $secret = $this->secrets->webhookSecretFor($mapping->stylesheet, $mapping->repo->full());
+            if (null !== $secret && self::signatureMatches($secret, $body, $header)) {
+                return [$mapping, $payload];
+            }
         }
 
-        return null;
+        // An unknown repository gets the same answer as a bad signature.
+        return WebhookResult::error(401);
     }
 
     /**
-     * A delivery that passed the permission check. It is authorised again here, so the callback never
-     * relies on WordPress having run the permission callback first.
+     * The managed themes a delivery may be about: by the repository's GitHub id first (a renamed repository keeps its
+     * id), else by name when the stored id (if any) is the payload's. A payload that names no repository (a ping,
+     * plan O1) may be about any managed theme; one that names an unmanaged repository is about none.
+     *
+     * @param array<mixed> $payload
+     * @return list<Mapping>
      */
-    public function process(\WP_REST_Request $request): WebhookResult
+    private function candidates(array $payload): array
     {
-        $refusal = $this->authorize($request);
-        if (null !== $refusal) {
-            return $refusal;
+        $repository = $payload['repository'] ?? null;
+        if (! is_array($repository)) {
+            return array_values($this->mappings->all());
         }
-        $body = (string) $request->get_body();
-        $delivery = $request->get_header('x_github_delivery');
-        $payload = json_decode($body, true);
-        if (! self::isValidDeliveryId($delivery) || ! is_array($payload)) {
-            return WebhookResult::error(400);
+        $id = $repository['id'] ?? null;
+        $id = is_int($id) && $id > 0 ? $id : null;
+        $candidates = [];
+        foreach ($this->mappings->all() as $mapping) {
+            if (null !== $id && $id === $mapping->repoId) {
+                $candidates[$mapping->stylesheet] = $mapping;
+            }
         }
-        $refusal = $this->accept((string) $delivery, $body);
-        if (null !== $refusal) {
-            return $refusal;
+        $full = $repository['full_name'] ?? null;
+        try {
+            $name = RepoName::fromString(is_string($full) ? $full : '');
+        } catch (ValidationError) {
+            $name = null;
         }
-        $this->recordReceipt($payload);
+        $byName = null === $name ? null : $this->mappings->findByRepo($name);
+        if (null !== $byName && (null === $byName->repoId || null === $id || $id === $byName->repoId)) {
+            $candidates[$byName->stylesheet] = $byName;
+        }
 
-        return $this->dispatch((string) $request->get_header('x_github_event'), $payload);
+        return array_values($candidates);
     }
 
     /**
@@ -187,7 +251,7 @@ final class Module
     }
 
     /** @param array<mixed> $payload */
-    private function dispatch(string $event, array $payload): WebhookResult
+    private function dispatch(string $event, array $payload, Mapping $mapping): WebhookResult
     {
         if ('ping' === $event) {
             $this->log->add('webhook_ping');
@@ -196,10 +260,7 @@ final class Module
         if (! self::isTagEvent($event, $payload)) {
             return WebhookResult::ignored();
         }
-        $repo = $this->repoFrom($payload);
-        if (null === $repo) {
-            return WebhookResult::ignored();
-        }
+        $repo = $mapping->repo;
         // At most one webhook-triggered check per repository per CHECK_INTERVAL (review F1): a burst of
         // signed tag events is accepted, but cannot spend the token's hourly GitHub quota.
         if (null !== $this->storage->transient(self::checkKey($repo))) {
@@ -213,51 +274,9 @@ final class Module
         return WebhookResult::ok();
     }
 
-    /**
-     * A first-seen valid delivery (any event, ping included) proves GitHub reaches this site for that repository:
-     * its time clears an older failed delivery of that repository (spec call 13). Only for a mapped repository.
-     *
-     * @param array<mixed> $payload
-     */
-    private function recordReceipt(array $payload): void
-    {
-        $repo = $this->repoFrom($payload);
-        $mapping = null === $repo ? null : $this->mappings->findByRepo($repo);
-        if (null === $mapping) {
-            return;
-        }
-        // A delivery that names another repository id than the stored one is not about the mapped repository.
-        $id = is_array($payload['repository'] ?? null) ? ($payload['repository']['id'] ?? null) : null;
-        if (null !== $mapping->repoId && is_int($id) && $id !== $mapping->repoId) {
-            return;
-        }
-        $this->state->setReceived($mapping->repo, $this->env->now());
-    }
-
     private static function checkKey(RepoName $repo): string
     {
         return Keys::DELIVERY_PREFIX . 'chk_' . md5($repo->full());
-    }
-
-    /**
-     * The mapped repository the delivery is about: by its GitHub id first (a renamed repository keeps
-     * its id), else by name. The plugin re-reads everything from the API itself.
-     *
-     * @param array<mixed> $payload
-     */
-    private function repoFrom(array $payload): ?RepoName
-    {
-        $id = is_array($payload['repository'] ?? null) ? ($payload['repository']['id'] ?? null) : null;
-        $byId = is_int($id) ? $this->mappings->findByRepoId($id) : null;
-        if (null !== $byId) {
-            return $byId->repo;
-        }
-        $full = is_array($payload['repository'] ?? null) ? ($payload['repository']['full_name'] ?? null) : null;
-        try {
-            return RepoName::fromString(is_string($full) ? $full : '');
-        } catch (ValidationError) {
-            return null;
-        }
     }
 
     /** @param array<mixed> $payload */

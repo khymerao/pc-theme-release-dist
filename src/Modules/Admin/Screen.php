@@ -132,48 +132,7 @@ final class Screen
                 return; // Nothing is failing now (reload after a later success, or a typed URL).
             }
         }
-        if ($this->renderWebhookMessage($code)) {
-            return;
-        }
         View::notice($code->level(), $code->message(), true, $details);
-    }
-
-    /**
-     * The Create webhook answers: the theme named by `pctr_theme` must be managed (else the plain message); the link
-     * comes from the stored hook id; GitHub's refusal text is read once from this user's transient and escaped.
-     */
-    private function renderWebhookMessage(MessageCode $code): bool
-    {
-        $links = [
-            MessageCode::WebhookCreated->value => __('Webhook settings on GitHub', 'pc-theme-release'),
-            MessageCode::WebhookExists->value => __('Webhook settings on GitHub', 'pc-theme-release'),
-            MessageCode::WebhookDuplicate->value => __('Webhooks of this repository on GitHub', 'pc-theme-release'),
-            MessageCode::WebhookForbidden->value => __('Add it by hand: webhooks of this repository on GitHub', 'pc-theme-release'),
-            MessageCode::WebhookRejected->value => __('Webhooks of this repository on GitHub', 'pc-theme-release'),
-        ];
-        $label = $links[$code->value] ?? null;
-        if (null === $label) {
-            return false;
-        }
-        $details = [];
-        if (MessageCode::WebhookRejected === $code) {
-            $key = Keys::WEBHOOK_MESSAGE_PREFIX . get_current_user_id();
-            $text = get_transient($key);
-            delete_transient($key);
-            $details[] = is_string($text) && '' !== $text ? $text : __('(GitHub gave no reason, or it was already shown.)', 'pc-theme-release');
-        }
-        $status = $this->offers->all()[self::query('pctr_theme')] ?? null;
-        if (null === $status) {
-            View::notice($code->level(), $code->message(), true, $details);
-            return true;
-        }
-        $repo = $status->mapping->repo;
-        $url = in_array($code, [MessageCode::WebhookCreated, MessageCode::WebhookExists], true) ? $this->health->hookLink($repo) : Health::hooksPage($repo);
-        /* translators: %s: owner/repo. */
-        $details[] = sprintf(__('Repository: %s', 'pc-theme-release'), $repo->full());
-        View::linkNotice($code->level(), $code->message(), $details, $url, $label);
-
-        return true;
     }
 
     /** The setup steps until a channel is chosen, and the host confirmation after a host change. */
@@ -271,16 +230,34 @@ final class Screen
         echo '<table class="form-table" role="presentation"><tbody><tr><th scope="row">' . esc_html__('Payload URL', 'pc-theme-release') . '</th><td><code>'
             . esc_html(rest_url(Keys::REST_NAMESPACE . '/webhook')) . '</code><p class="description">'
             . esc_html__('Content type: application/json. Events: Branch or tag creation, Pushes.', 'pc-theme-release') . '</p></td></tr></tbody></table>';
-        $this->renderSecret(SecretKind::WebhookSecret, Action::SaveWebhookSecret, Action::DeleteWebhookSecret, __('Webhook secret', 'pc-theme-release'));
-        if (! $this->secrets->source(SecretKind::WebhookSecret)->isConstant()) {
+        $source = $this->secrets->source(SecretKind::WebhookSecret);
+        if (SecretSource::None === $source) {
+            // Fresh installs never get a global secret: each theme has its own (per-theme secret spec call 5).
+            echo '<p>' . esc_html__('Each theme has its own webhook secret: open Themes → Webhook setup… on its row.', 'pc-theme-release') . '</p>';
+            return;
+        }
+        // The global (shared) secret of v1.5 sites, kept while it exists so it can be rotated; deletable once no theme uses it.
+        $this->renderSecret(SecretKind::WebhookSecret, Action::SaveWebhookSecret, Action::DeleteWebhookSecret, __('Shared webhook secret', 'pc-theme-release'), ! $this->globalSecretInUse());
+        if (! $source->isConstant()) {
             View::screenFormStart(Action::GenerateWebhookSecret, Tab::GitHub);
             View::submit(__('Generate a new webhook secret', 'pc-theme-release'), 'secondary');
             echo '</form>';
         }
     }
 
+    /** Whether a managed theme without its own secret relies on the global one. */
+    private function globalSecretInUse(): bool
+    {
+        $themes = [];
+        foreach ($this->offers->all() as $stylesheet => $status) {
+            $themes[(string) $stylesheet] = $status->mapping->repo->full();
+        }
+
+        return $this->secrets->globalSecretInUse($themes);
+    }
+
     /** One secret's row: where it comes from, and the save/replace and delete forms when the screen may change it. */
-    private function renderSecret(SecretKind $kind, Action $save, Action $delete, string $label): void
+    private function renderSecret(SecretKind $kind, Action $save, Action $delete, string $label, bool $deletable = true): void
     {
         $source = $this->secrets->source($kind);
         $id = 'pctr-' . str_replace('_', '-', $kind->value);
@@ -292,7 +269,7 @@ final class Screen
             View::submit(SecretSource::None === $source ? __('Save', 'pc-theme-release') : __('Replace', 'pc-theme-release'), 'secondary', false);
             echo '</form>';
         }
-        if (! $source->isConstant() && SecretSource::None !== $source) {
+        if (! $source->isConstant() && SecretSource::None !== $source && $deletable) {
             View::formStart($delete);
             View::submit(__('Delete', 'pc-theme-release'), 'link-delete', false);
             echo '</form>';

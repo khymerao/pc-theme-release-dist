@@ -20,8 +20,8 @@ final class Keys
     public const string RATE_WINDOW = 'pc_theme_release_webhook_window';
     public const string DELIVERY_PREFIX = 'pc_theme_release_dlv_';
     public const string COMPARE_PREFIX = 'pc_theme_release_cmp_';
-    /** GitHub text of a refused Create webhook, per user, for one display (removed with the PREFIX transients). */
-    public const string WEBHOOK_MESSAGE_PREFIX = 'pc_theme_release_whmsg_';
+    /** A just-generated theme webhook secret (encrypted), per user and theme, for one display (removed with the PREFIX transients). */
+    public const string SECRET_SHOWN_PREFIX = 'pc_theme_release_whsec_';
     public const string CRON_HOOK = 'pc_theme_release_check';
     public const string LOCK = 'pc_theme_release';
     public const string PAGE_SLUG = 'pc-theme-release';

@@ -8,6 +8,7 @@ use ProCoders\ThemeRelease\Core\Support\Environment;
 use ProCoders\ThemeRelease\Core\Support\Keys;
 use ProCoders\ThemeRelease\Domain\Release\ChannelRelease;
 use ProCoders\ThemeRelease\Domain\Release\SemVer;
+use ProCoders\ThemeRelease\Domain\Status\Health;
 use ProCoders\ThemeRelease\Domain\Status\ThemeStatus;
 use ProCoders\ThemeRelease\Domain\Theme\Themes;
 
@@ -24,6 +25,16 @@ final class ThemesListTable extends \WP_List_Table
     private const string MODE_RECORD = 'record';
     private const string MODE_WEBHOOK = 'webhook';
 
+    /** Webhook secret states of a theme's Webhook setup panel (ThemesTab decides). */
+    public const string SECRET_OWN = 'own';
+    public const string SECRET_UNDECRYPTABLE = 'undecryptable';
+    public const string SECRET_SHARED = 'shared';
+    public const string SECRET_NONE = 'none';
+    public const string SECRET_CONSTANT = 'constant';
+    public const string SECRET_CONSTANT_INVALID = 'constant_invalid';
+    /** Suffix of a state whose secret cannot be stored here (weak salts). */
+    public const string WEAK_SALTS = '_weak';
+
     /** Stylesheet of the theme whose inline row is open ('' when none) and the row's mode. */
     private readonly string $editing;
     private readonly string $editMode;
@@ -31,25 +42,37 @@ final class ThemesListTable extends \WP_List_Table
     /**
      * @param array<string, ThemeStatus> $statuses Keyed by stylesheet.
      * @param string                     $addUrl   Where "Add theme" leads; '' when every installed theme is managed.
-     * @param list<string>               $webhookCreatable Stylesheets that get Create webhook (ThemesTab decides).
+     * @param array<string, string>      $webhookStates stylesheet => SECRET_* state (with WEAK_SALTS when nothing can be stored).
+     * @param list<string>               $webhookLinks  Stylesheets whose row shows "Webhook setup…" (ThemesTab decides).
+     * @param array{0: string, 1: string} $shown   The theme and the secret generated for this user, shown once now.
      * @param string                     $edit     The display-only `edit` query arg (honoured only when valid).
      * @param string                     $mode     The display-only `mode` query arg.
-     * @param string                     $webhook  The display-only `webhook` query arg: the theme whose Create webhook row is open.
+     * @param string                     $webhook  The display-only `webhook` query arg: the theme whose Webhook setup panel is open.
+     * @param bool                       $confirm  The display-only `confirm=1`: the panel asks to confirm replacing the secret.
      */
     public function __construct(
         private readonly array $statuses,
         private readonly Themes $themes,
         private readonly bool $installsAllowed,
         private readonly string $addUrl,
-        private readonly array $webhookCreatable,
+        private readonly array $webhookStates,
+        private readonly array $webhookLinks,
+        private readonly array $shown,
         string $edit,
         string $mode,
         string $webhook = '',
+        private readonly bool $confirm = false,
     ) {
         parent::__construct(['plural' => 'pctr-themes', 'singular' => 'pctr-theme', 'ajax' => false]);
-        $webhookStatus = $this->statuses[$webhook] ?? null;
-        // Its own query arg, not edit=: the Create webhook row never stands for Change version.
-        [$this->editing, $this->editMode] = null !== $webhookStatus && $this->canCreateWebhook($webhookStatus) ? [$webhook, self::MODE_WEBHOOK] : $this->inlineRow($edit, $mode);
+        // A secret shown once must be on this page; else the panel the `webhook` arg names (its own query arg, not
+        // edit=: the panel never stands for Change version), else the edit row.
+        if ('' !== $shown[0] && isset($this->statuses[$shown[0]])) {
+            [$this->editing, $this->editMode] = [$shown[0], self::MODE_WEBHOOK];
+        } elseif (isset($this->statuses[$webhook]) && in_array($webhook, $this->webhookLinks, true)) {
+            [$this->editing, $this->editMode] = [$webhook, self::MODE_WEBHOOK];
+        } else {
+            [$this->editing, $this->editMode] = $this->inlineRow($edit, $mode);
+        }
     }
 
     /** @return array<string, string> */
@@ -117,11 +140,11 @@ final class ThemesListTable extends \WP_List_Table
             /* translators: %s: branch. */
             $html .= self::note(esc_html(sprintf(__('branch: %s (site default)', 'pc-theme-release'), $status->branch)));
         }
-        if ($this->canCreateWebhook($status)) {
+        if (in_array($mapping->stylesheet, $this->webhookLinks, true)) {
             // In this cell, not in the row actions: a third row action wraps in the Theme column and its targets
-            // come closer than WCAG 2.5.8 allows. Always visible while no hook of this site is known.
+            // come closer than WCAG 2.5.8 allows.
             /* translators: %s: theme name. */
-            $html .= self::note(self::link(Tab::Themes->url(['webhook' => $mapping->stylesheet]), __('Create webhook…', 'pc-theme-release'), sprintf(__('Create webhook for %s', 'pc-theme-release'), $this->name($status))));
+            $html .= self::note(self::link(Tab::Themes->url(['webhook' => $mapping->stylesheet]), __('Webhook setup…', 'pc-theme-release'), sprintf(__('Webhook setup for %s', 'pc-theme-release'), $this->name($status))));
         }
 
         return $html;
@@ -283,7 +306,7 @@ final class ThemesListTable extends \WP_List_Table
         $stylesheet = $status->mapping->stylesheet;
         $name = $this->name($status);
         if (self::MODE_WEBHOOK === $this->editMode) {
-            $this->renderWebhookRow($stylesheet, $name);
+            $this->renderWebhookRow($status, $name);
             return;
         }
         $record = self::MODE_RECORD === $this->editMode;
@@ -323,25 +346,110 @@ final class ThemesListTable extends \WP_List_Table
     }
 
     /**
-     * The Create webhook row: a one-time token (password field, never filled in again) posted to admin-post.php.
+     * The Webhook setup panel (per-theme secret spec call 1): what to paste into GitHub's Add webhook form, the theme's
+     * secret (shown once right after it was generated) and the controls that generate it. Copy buttons appear only
+     * with JavaScript; the read-only fields can always be selected and copied by hand.
      */
-    private function renderWebhookRow(string $stylesheet, string $name): void
+    private function renderWebhookRow(ThemeStatus $status, string $name): void
     {
+        $stylesheet = $status->mapping->stylesheet;
+        $repo = $status->mapping->repo;
         echo '<tr class="pctr-inline-row" id="pctr-inline-edit"><td colspan="' . esc_attr((string) $this->get_column_count()) . '" class="colspanchange">';
-        View::formStart(Action::CreateWebhook);
-        View::hidden('theme', $stylesheet);
         /* translators: %s: theme name. */
-        echo '<p><strong>' . esc_html(sprintf(__('Create the GitHub webhook for %s', 'pc-theme-release'), $name)) . '</strong></p>'
-            . '<p><label for="pctr-webhook-token">' . esc_html__('One-time GitHub token (Webhooks: Read and write)', 'pc-theme-release') . '</label><br>'
-            . '<input type="password" class="regular-text" id="pctr-webhook-token" name="webhook_token" autocomplete="off" spellcheck="false" required aria-describedby="pctr-webhook-token-note"> ';
-        View::submit(__('Create webhook', 'pc-theme-release'), 'primary', false);
-        echo ' <a class="button" href="' . esc_url(Tab::Themes->url()) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a></p>'
-            . '<p class="description" id="pctr-webhook-token-note">' . esc_html__('Used once for this repository and not saved. Revoke it on GitHub afterwards.', 'pc-theme-release') . '</p></form></td></tr>';
+        echo '<p><strong>' . esc_html(sprintf(__('Webhook setup for %s', 'pc-theme-release'), $name)) . '</strong></p>'
+            . '<p>' . esc_html__('On GitHub, add a webhook to the repository and paste these values. Only an owner or admin of the repository can add it.', 'pc-theme-release') . '</p>'
+            . '<table class="form-table" role="presentation"><tbody><tr><th scope="row"><label for="pctr-payload-url">' . esc_html__('Payload URL', 'pc-theme-release') . '</label></th><td>';
+        self::renderCopyField('pctr-payload-url', rest_url(Keys::REST_NAMESPACE . '/webhook'), __('Copy payload URL', 'pc-theme-release'));
+        echo '</td></tr><tr><th scope="row">' . ('' === $this->shownSecretFor($stylesheet) ? esc_html__('Secret', 'pc-theme-release') : '<label for="pctr-theme-secret">' . esc_html__('Secret', 'pc-theme-release') . '</label>') . '</th><td>';
+        $this->renderSecretCell($stylesheet);
+        echo '</td></tr></tbody></table>'
+            . '<p class="description">' . esc_html__('Content type: application/json. Events: Branch or tag creation, Pushes.', 'pc-theme-release') . '</p>'
+            . '<p><a class="button button-primary" href="' . esc_url(Health::hooksPage($repo) . '/new') . '" target="_blank" rel="noopener">' . esc_html__('Open GitHub: Add webhook', 'pc-theme-release') . '</a> '
+            . '<a class="button" href="' . esc_url(Tab::Themes->url()) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a></p>'
+            . '<p id="pctr-copy-status" role="status" aria-live="polite" class="description"></p></td></tr>';
+        self::renderCopyScript();
     }
 
-    private function canCreateWebhook(ThemeStatus $status): bool
+    /** The secret line of the panel for the theme's state; the confirm step when `confirm=1` asks to replace it. */
+    private function renderSecretCell(string $stylesheet): void
     {
-        return in_array($status->mapping->stylesheet, $this->webhookCreatable, true);
+        $shown = $this->shownSecretFor($stylesheet);
+        if ('' !== $shown) {
+            self::renderCopyField('pctr-theme-secret', $shown, __('Copy secret', 'pc-theme-release'));
+            echo '<p class="description">' . esc_html__('Shown only this once: copy it into the Secret field on GitHub now. If it is lost, generate a new one.', 'pc-theme-release') . '</p>';
+            return;
+        }
+        $state = $this->webhookStates[$stylesheet] ?? self::SECRET_NONE;
+        $weak = str_ends_with($state, self::WEAK_SALTS);
+        $state = $weak ? substr($state, 0, -strlen(self::WEAK_SALTS)) : $state;
+        $text = match ($state) {
+            self::SECRET_OWN => __('Secret set.', 'pc-theme-release'),
+            self::SECRET_UNDECRYPTABLE => __('Stored but cannot be decrypted (salts changed). Generate a new one and edit the webhook on GitHub.', 'pc-theme-release'),
+            self::SECRET_SHARED => __('Shared secret (the global one from the GitHub tab). Give this theme its own secret, then edit the webhook on GitHub: the shared secret no longer works for this theme after that.', 'pc-theme-release'),
+            self::SECRET_CONSTANT => __('The secret comes from wp-config.php (PC_THEME_RELEASE_WEBHOOK_SECRET); every theme uses it.', 'pc-theme-release'),
+            self::SECRET_CONSTANT_INVALID => __('PC_THEME_RELEASE_WEBHOOK_SECRET in wp-config.php is invalid, so every delivery is refused. Fix it there.', 'pc-theme-release'),
+            default => __('No webhook secret yet.', 'pc-theme-release'),
+        };
+        echo '<p>' . esc_html($text) . '</p>';
+        if (in_array($state, [self::SECRET_CONSTANT, self::SECRET_CONSTANT_INVALID], true)) {
+            return;
+        }
+        if ($weak) {
+            echo '<p class="description">' . esc_html__('A secret cannot be stored here: AUTH_KEY / SECURE_AUTH_KEY in wp-config.php are missing or weak. Define PC_THEME_RELEASE_WEBHOOK_SECRET in wp-config.php instead.', 'pc-theme-release') . '</p>';
+            return;
+        }
+        if (self::SECRET_NONE === $state) {
+            self::renderGenerateForm($stylesheet, __('Generate secret', 'pc-theme-release'));
+            return;
+        }
+        $label = self::SECRET_SHARED === $state ? __('Generate own secret', 'pc-theme-release') : __('Generate new secret', 'pc-theme-release');
+        if (! $this->confirm) {
+            echo '<p><a href="' . esc_url(Tab::Themes->url(['webhook' => $stylesheet, 'confirm' => '1'])) . '">' . esc_html($label . '…') . '</a></p>';
+            return;
+        }
+        echo '<div class="notice notice-warning inline"><p>' . esc_html__('This replaces the secret of this theme. Deliveries from GitHub are refused until you edit the webhook on GitHub and paste the new secret.', 'pc-theme-release') . '</p></div>';
+        self::renderGenerateForm($stylesheet, $label, Tab::Themes->url(['webhook' => $stylesheet]));
+    }
+
+    /** One POST button for the theme's Generate action, with an optional Cancel link back to the panel. */
+    private static function renderGenerateForm(string $stylesheet, string $label, string $cancel = ''): void
+    {
+        View::formStart(Action::GenerateThemeSecret);
+        View::hidden('theme', $stylesheet);
+        echo '<p>';
+        View::submit($label, 'secondary', false);
+        if ('' !== $cancel) {
+            echo ' <a class="button-link" href="' . esc_url($cancel) . '">' . esc_html__('Cancel', 'pc-theme-release') . '</a>';
+        }
+        echo '</p></form>';
+    }
+
+    private function shownSecretFor(string $stylesheet): string
+    {
+        return $stylesheet === $this->shown[0] ? $this->shown[1] : '';
+    }
+
+    /** A read-only field and its Copy button (hidden until the script below shows it). */
+    private static function renderCopyField(string $id, string $value, string $copyLabel): void
+    {
+        echo '<input type="text" class="large-text code" id="' . esc_attr($id) . '" value="' . esc_attr($value) . '" readonly autocomplete="off" spellcheck="false"> '
+            . '<button type="button" class="button" data-pctr-copy="' . esc_attr($id) . '" aria-label="' . esc_attr($copyLabel) . '" hidden>' . esc_html__('Copy', 'pc-theme-release') . '</button>';
+    }
+
+    /**
+     * Copy with the Clipboard API where the page is a secure context; else (plain http, or a refusal) the field's text
+     * is selected so Ctrl+C / Cmd+C copies it. The result is announced in the status line.
+     */
+    private static function renderCopyScript(): void
+    {
+        $copied = wp_json_encode(__('Copied.', 'pc-theme-release'));
+        $manual = wp_json_encode(__('Selected: press Ctrl+C (Cmd+C on a Mac) to copy.', 'pc-theme-release'));
+        echo '<script>(function(){var done=' . $copied . ',manual=' . $manual . ';' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON-encoded fixed strings.
+            . 'document.querySelectorAll("[data-pctr-copy]").forEach(function(b){b.hidden=false;b.addEventListener("click",function(){'
+            . 'var f=document.getElementById(b.getAttribute("data-pctr-copy")),s=document.getElementById("pctr-copy-status");'
+            . 'function sel(){f.focus();f.select();s.textContent=manual;}'
+            . 'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(f.value).then(function(){s.textContent=done;},sel);}else{sel();}'
+            . '});});})();</script>';
     }
 
     private function name(ThemeStatus $status): string

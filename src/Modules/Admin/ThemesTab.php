@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace ProCoders\ThemeRelease\Modules\Admin;
 
 use ProCoders\ThemeRelease\Core\Config\SiteContext;
+use ProCoders\ThemeRelease\Core\Security\SecretKind;
+use ProCoders\ThemeRelease\Core\Security\Secrets;
+use ProCoders\ThemeRelease\Core\Security\SecretSource;
 use ProCoders\ThemeRelease\Core\Support\Environment;
 use ProCoders\ThemeRelease\Core\Support\ValidationError;
 use ProCoders\ThemeRelease\Domain\Release\ChannelRelease;
@@ -26,6 +29,7 @@ final class ThemesTab
         private readonly Themes $themes,
         private readonly InstallFlow $installs,
         private readonly StateStore $state,
+        private readonly Secrets $secrets,
     ) {
     }
 
@@ -41,7 +45,8 @@ final class ThemesTab
             // Core's list table is loaded only here, right before the table is built (not on other tabs or views).
             require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
         }
-        $table = new ThemesListTable($statuses, $this->themes, self::installsAllowed(), $this->addUrl($statuses), $this->webhookCreatable($statuses), Screen::query('edit'), Screen::query('mode'), Screen::query('webhook'));
+        $states = $this->webhookStates($statuses);
+        $table = new ThemesListTable($statuses, $this->themes, self::installsAllowed(), $this->addUrl($statuses), $states, $this->webhookLinks($statuses, $states), $this->shownSecret($statuses), Screen::query('edit'), Screen::query('mode'), Screen::query('webhook'), '1' === Screen::query('confirm'));
         $table->prepare_items();
         $table->display();
         if (! self::installsAllowed()) {
@@ -127,27 +132,77 @@ final class ThemesTab
     }
 
     /**
-     * The themes that get Create webhook (spec call 1): a webhook secret is set (a wp-config constant counts) and the
-     * last delivery check of the repository found no hook of this site (nothing stored, no hook, no permission,
-     * unknown, or only another host hook). The stored outcome counts, not its 48-hour display age.
+     * The webhook secret state of every theme's Webhook setup panel (per-theme secret spec calls 1, 5, 6): the
+     * wp-config constant (valid or not) for all; else the theme's own secret, the shared global one, or none.
      *
      * @param array<string, ThemeStatus> $statuses
+     * @return array<string, string> stylesheet => ThemesListTable::SECRET_* state
+     */
+    private function webhookStates(array $statuses): array
+    {
+        $source = $this->secrets->source(SecretKind::WebhookSecret);
+        $global = SecretSource::None !== $source;
+        $states = [];
+        foreach ($statuses as $stylesheet => $status) {
+            if ($source->isConstant()) {
+                $states[$stylesheet] = SecretSource::Constant === $source ? ThemesListTable::SECRET_CONSTANT : ThemesListTable::SECRET_CONSTANT_INVALID;
+                continue;
+            }
+            $own = $this->secrets->themeSecretState((string) $stylesheet, $status->mapping->repo->full());
+            $state = match ($own) {
+                SecretSource::Database => ThemesListTable::SECRET_OWN,
+                SecretSource::Undecryptable => ThemesListTable::SECRET_UNDECRYPTABLE,
+                default => $global ? ThemesListTable::SECRET_SHARED : ThemesListTable::SECRET_NONE,
+            };
+            // Nothing can be stored with weak salts: the panel says so instead of offering a button.
+            $states[$stylesheet] = ThemesListTable::SECRET_OWN !== $state && ! $this->secrets->canStore() ? $state . ThemesListTable::WEAK_SALTS : $state;
+        }
+
+        return $states;
+    }
+
+    /**
+     * The themes whose row shows "Webhook setup…" (spec call 1): no hook of this site is known yet (the stored outcome
+     * counts, not its 48-hour display age), or the theme has no secret of its own (unless the constant verifies all).
+     *
+     * @param array<string, ThemeStatus> $statuses
+     * @param array<string, string>      $states
      * @return list<string> stylesheets
      */
-    private function webhookCreatable(array $statuses): array
+    private function webhookLinks(array $statuses, array $states): array
     {
-        if (! $this->site->webhookInUse()) {
-            return [];
-        }
-        $creatable = [];
-        foreach ($statuses as $status) {
+        $links = [];
+        foreach ($statuses as $stylesheet => $status) {
             $stored = $this->state->delivery($status->mapping->repo);
-            if (null === $stored || ! $stored->knowsHook()) {
-                $creatable[] = $status->mapping->stylesheet;
+            $hookKnown = null !== $stored && $stored->knowsHook();
+            $state = $states[$stylesheet] ?? '';
+            $ownOrConstant = in_array($state, [ThemesListTable::SECRET_OWN, ThemesListTable::SECRET_CONSTANT, ThemesListTable::SECRET_CONSTANT_INVALID], true);
+            if (! $hookKnown || ! $ownOrConstant) {
+                $links[] = (string) $stylesheet;
             }
         }
 
-        return $creatable;
+        return $links;
+    }
+
+    /**
+     * The secret generated for this user that waits to be shown once (spec call 2), and its theme; at most one is
+     * taken (and so deleted) per page, the one whose panel this page opens.
+     *
+     * @param array<string, ThemeStatus> $statuses
+     * @return array{0: string, 1: string} stylesheet, secret ('' and '' when none)
+     */
+    private function shownSecret(array $statuses): array
+    {
+        $user = get_current_user_id();
+        foreach ($statuses as $stylesheet => $status) {
+            $secret = $this->secrets->takeForDisplay($user, (string) $stylesheet, $status->mapping->repo->full());
+            if (null !== $secret) {
+                return [(string) $stylesheet, $secret];
+            }
+        }
+
+        return ['', ''];
     }
 
     /**

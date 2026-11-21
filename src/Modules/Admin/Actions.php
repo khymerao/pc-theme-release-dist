@@ -6,17 +6,11 @@ namespace ProCoders\ThemeRelease\Modules\Admin;
 
 use ProCoders\ThemeRelease\Core\Config\Channel;
 use ProCoders\ThemeRelease\Core\Config\SiteContext;
-use ProCoders\ThemeRelease\Core\GitHub\GitHubClient;
-use ProCoders\ThemeRelease\Core\GitHub\GitHubError;
-use ProCoders\ThemeRelease\Core\GitHub\GitHubErrorKind;
 use ProCoders\ThemeRelease\Core\Security\SecretKind;
 use ProCoders\ThemeRelease\Core\Security\Secrets;
 use ProCoders\ThemeRelease\Core\Support\Environment;
-use ProCoders\ThemeRelease\Core\Support\Keys;
 use ProCoders\ThemeRelease\Core\Support\ValidationError;
 use ProCoders\ThemeRelease\Domain\Release\Checker;
-use ProCoders\ThemeRelease\Domain\Release\DeliveryCheck;
-use ProCoders\ThemeRelease\Domain\Release\DeliveryStatus;
 use ProCoders\ThemeRelease\Domain\Release\StateStore;
 use ProCoders\ThemeRelease\Domain\Release\StatusLog;
 use ProCoders\ThemeRelease\Domain\Release\UpdateTransient;
@@ -40,12 +34,8 @@ final class Actions
         private readonly Checker $checker,
         private readonly StatusLog $log,
         private readonly Environment $env,
-        private readonly GitHubClient $github,
     ) {
     }
-
-    /** How long GitHub's text of a refused Create webhook waits to be shown, in seconds. */
-    public const int WEBHOOK_MESSAGE_TTL = 300;
 
     /** admin_post_{action} entry point. */
     public function dispatch(): void
@@ -86,14 +76,14 @@ final class Actions
             Action::SaveToken => $this->saveSecret(SecretKind::Token, $input->secret('token'), MessageCode::TokenSaved),
             Action::DeleteToken => $this->deleteSecret(SecretKind::Token, MessageCode::TokenDeleted),
             Action::SaveWebhookSecret => $this->saveSecret(SecretKind::WebhookSecret, $input->secret('webhook_secret'), MessageCode::WebhookSecretSaved),
-            Action::DeleteWebhookSecret => $this->deleteSecret(SecretKind::WebhookSecret, MessageCode::WebhookSecretDeleted),
+            Action::DeleteWebhookSecret => $this->deleteGlobalWebhookSecret(),
             Action::CheckNow => $this->checkNow(),
             Action::AddMapping => $this->addMapping($input),
             Action::RemoveMapping => $this->removeMapping($input->text('theme')),
             Action::SeedTag => $this->seedTag($input->text('theme'), $input->text('tag')),
             Action::Unfreeze => $this->unfreeze($input->text('theme')),
             Action::ConfirmHost => $this->confirmHost($input),
-            Action::CreateWebhook => $this->createWebhook($input),
+            Action::GenerateThemeSecret => $this->generateThemeSecret($input->text('theme')),
             default => throw new \LogicException('Not an admin-post action: ' . $action->value),
         };
     }
@@ -152,6 +142,15 @@ final class Actions
         $identify = $this->site->isOperational() ? [$this->checker, 'idForNewMapping'] : null;
         $mapping = $this->mappings->add($input->text('theme'), $input->text('repo'), $input->text('branch'), $identify);
         $this->log->add('mapping_added', $mapping->repo->full());
+        // New themes always get their own webhook secret (spec call 5), shown once on the next page. Not under the
+        // wp-config constant, not on an unconfirmed (cloned) site, and not with weak salts: the panel offers it then.
+        if (! $this->secrets->source(SecretKind::WebhookSecret)->isConstant() && ! $this->site->hostChanged()) {
+            try {
+                $this->issueThemeSecret($mapping->stylesheet, $mapping->repo->full());
+            } catch (ValidationError) {
+                // Weak salts: the mapping stays; the Webhook setup panel says why no secret can be stored.
+            }
+        }
         if ($this->site->isOperational()) {
             $this->checker->checkRepo($mapping->repo, 'mapping_added');
         }
@@ -170,6 +169,7 @@ final class Actions
     private function removeMapping(string $stylesheet): MessageCode
     {
         $removed = $this->mappings->remove($stylesheet) ?? throw new ValidationError('mapping_gone');
+        $this->secrets->deleteThemeSecret($removed->stylesheet);
         $this->state->forgetRepo($removed->repo);
         $this->log->add('mapping_removed', $removed->repo->full());
         UpdateTransient::refresh();
@@ -229,59 +229,52 @@ final class Actions
     }
 
     /**
-     * Create webhook (spec calls 1-8): every precondition is checked before anything is sent; the one-time token
-     * is used by a client clone for this request only and is never stored, logged or sent back.
+     * Generate secret / Generate new secret / Generate own secret (per-theme secret spec calls 1, 5, 9): everything
+     * is checked again at submit; only this theme's secret changes.
      *
      * @throws ValidationError
      */
-    private function createWebhook(Input $input): MessageCode
+    private function generateThemeSecret(string $stylesheet): MessageCode
     {
-        $mapping = $this->mappings->require($input->text('theme'));
+        $mapping = $this->mappings->require($stylesheet);
         if ($this->site->hostChanged()) {
             throw new ValidationError('host_changed');
         }
-        $secret = $this->secrets->webhookSecret() ?? throw new ValidationError('webhook_no_secret');
-        // The URL the GitHub tab shows and the delivery check matches.
-        $endpoint = rest_url(Keys::REST_NAMESPACE . '/webhook');
-        if (! str_starts_with(strtolower($endpoint), 'https://')) {
-            throw new ValidationError('webhook_not_https');
-        }
-        $token = trim($input->secret('webhook_token'));
-        if (! SecretKind::Token->isValidNew($token)) {
-            throw new ValidationError('invalid_webhook_token');
-        }
-        $repo = $mapping->repo;
-        $check = new DeliveryCheck($this->github->withToken($token), $this->state, $this->env);
-        try {
-            $result = $check->create($repo, $endpoint, rest_get_url_prefix(), $secret);
-        } catch (GitHubError $error) {
-            $this->log->add('webhook_create_failed', $repo->full(), '', $error->httpStatus);
+        $this->issueThemeSecret($mapping->stylesheet, $mapping->repo->full());
 
-            return match ($error->kind) {
-                GitHubErrorKind::NotFound, GitHubErrorKind::Forbidden => MessageCode::WebhookForbidden,
-                GitHubErrorKind::Unauthorized => MessageCode::WebhookTokenRejected,
-                GitHubErrorKind::RateLimited => MessageCode::WebhookRateLimited,
-                default => MessageCode::WebhookFailed,
-            };
-        }
-        if ('created' === $result['result']) {
-            $this->log->add('webhook_created', $repo->full(), '', 201);
+        return MessageCode::ThemeSecretGenerated;
+    }
 
-            return MessageCode::WebhookCreated;
-        }
-        if ('exists' === $result['result']) {
-            return MessageCode::WebhookExists;
-        }
-        $this->log->add('webhook_create_failed', $repo->full(), '', 422);
-        if ('duplicate' === $result['result']) {
-            return MessageCode::WebhookDuplicate;
-        }
-        // GitHub's words cannot travel in the URL: kept for this user's next page only (plan O4).
-        // GitHub could echo what it was sent: neither the token nor the secret is ever kept or shown.
-        $text = str_replace([$token, $secret], '[removed]', $result['message']);
-        set_transient(Keys::WEBHOOK_MESSAGE_PREFIX . get_current_user_id(), DeliveryStatus::cleanReason($text), self::WEBHOOK_MESSAGE_TTL);
+    /** @throws ValidationError */
+    private function issueThemeSecret(string $stylesheet, string $repo): void
+    {
+        $secret = $this->secrets->generateThemeSecret($stylesheet, $repo);
+        $this->secrets->holdForDisplay(get_current_user_id(), $stylesheet, $repo, $secret);
+        $this->log->add('webhook_secret_generated', $repo);
+    }
 
-        return MessageCode::WebhookRejected;
+    /**
+     * The global (v1.5) secret may be deleted only while no theme relies on it (spec call 5), checked at submit.
+     *
+     * @throws ValidationError
+     */
+    private function deleteGlobalWebhookSecret(): MessageCode
+    {
+        if ($this->globalSecretInUse()) {
+            throw new ValidationError('webhook_secret_in_use');
+        }
+
+        return $this->deleteSecret(SecretKind::WebhookSecret, MessageCode::WebhookSecretDeleted);
+    }
+
+    private function globalSecretInUse(): bool
+    {
+        $themes = [];
+        foreach ($this->mappings->all() as $mapping) {
+            $themes[$mapping->stylesheet] = $mapping->repo->full();
+        }
+
+        return $this->secrets->globalSecretInUse($themes);
     }
 
     /** @throws ValidationError */

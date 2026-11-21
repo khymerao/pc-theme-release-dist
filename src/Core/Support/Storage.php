@@ -128,6 +128,11 @@ final class Storage
         set_transient($key, $value, $ttlSeconds);
     }
 
+    public function deleteTransient(string $key): void
+    {
+        delete_transient($key);
+    }
+
     /**
      * Deletes the transients whose name starts with $prefix. With a persistent object cache they are not
      * enumerable; they expire by themselves (≤ 24 h).

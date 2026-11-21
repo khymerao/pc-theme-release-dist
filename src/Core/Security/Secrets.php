@@ -19,6 +19,10 @@ final class Secrets
     public const int HINT_MIN_LENGTH = 32;
     /** Value of Keys::SECRETS_FORMAT once every value is bound to its slot; legacy values are refused after. */
     private const int BOUND_FORMAT = 2;
+    /** Sub-key of Keys::SECRETS holding the per-theme webhook secrets (stylesheet => ciphertext). */
+    private const string THEMES = 'themes';
+    /** How long a freshly generated theme secret waits to be shown once to the admin who generated it, in seconds. */
+    public const int SHOWN_TTL = 600;
 
     public function __construct(
         private readonly Storage $storage,
@@ -97,6 +101,173 @@ final class Secrets
         $stored = $this->stored();
         unset($stored[$kind->value]);
         $this->write($stored);
+    }
+
+    /**
+     * The secret that verifies deliveries about this theme's repository (spec calls 4-6): the wp-config constant when
+     * defined (an invalid one verifies nothing), else the theme's own secret when it has one (the global secret is
+     * then never accepted for it, even when the own one cannot be decrypted), else the global secret.
+     */
+    public function webhookSecretFor(string $stylesheet, string $repo): ?string
+    {
+        if ($this->constantDefined(SecretKind::WebhookSecret)) {
+            return $this->constantValue(SecretKind::WebhookSecret);
+        }
+        if (SecretSource::None !== $this->themeSecretState($stylesheet, $repo)) {
+            return $this->themePlain($stylesheet, $repo);
+        }
+
+        return $this->plain(SecretKind::WebhookSecret);
+    }
+
+    /** The theme's own secret: None, Database (usable) or Undecryptable (salts changed, or written for another slot). */
+    public function themeSecretState(string $stylesheet, string $repo): SecretSource
+    {
+        $stored = $this->themeCiphers()[$stylesheet] ?? null;
+        if (! is_string($stored) || '' === $stored) {
+            return SecretSource::None;
+        }
+
+        return null === $this->themePlain($stylesheet, $repo) ? SecretSource::Undecryptable : SecretSource::Database;
+    }
+
+    /** Whether a secret can be stored encrypted here (strong salts). */
+    public function canStore(): bool
+    {
+        return $this->vault->saltsAreStrong();
+    }
+
+    /**
+     * Whether a theme relies on the global secret: it has no secret of its own (the constant, when defined, verifies
+     * every theme instead, so then none does).
+     *
+     * @param array<string, string> $themes stylesheet => owner/repo of every managed theme
+     */
+    public function globalSecretInUse(array $themes): bool
+    {
+        if ($this->constantDefined(SecretKind::WebhookSecret)) {
+            return false;
+        }
+        foreach ($themes as $stylesheet => $repo) {
+            if (SecretSource::None === $this->themeSecretState((string) $stylesheet, $repo)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** A webhook secret exists anywhere: a valid constant, the global secret, or any theme's own. */
+    public function anyWebhookSecret(): bool
+    {
+        if ($this->constantDefined(SecretKind::WebhookSecret)) {
+            return null !== $this->constantValue(SecretKind::WebhookSecret);
+        }
+
+        return null !== $this->plain(SecretKind::WebhookSecret) || [] !== $this->themeCiphers();
+    }
+
+    /**
+     * Generates, stores and returns the theme's own secret (32 random bytes as hex), bound to the theme and its
+     * repository; the theme's previous secret stops working, every other secret is unchanged.
+     *
+     * @throws ValidationError secret_in_constant, weak_salts
+     */
+    public function generateThemeSecret(string $stylesheet, string $repo): string
+    {
+        if ($this->constantDefined(SecretKind::WebhookSecret)) {
+            throw new ValidationError('secret_in_constant');
+        }
+        $secret = bin2hex(random_bytes(32));
+        $cipher = $this->vault->encrypt($secret, SecretKind::WebhookSecret, self::themeScope($stylesheet, $repo));
+        if (null === $cipher) {
+            throw new ValidationError('weak_salts');
+        }
+        // Read fresh: another request may have written another theme's secret meanwhile.
+        $stored = $this->storage->freshArray(Keys::SECRETS);
+        $themes = is_array($stored[self::THEMES] ?? null) ? $stored[self::THEMES] : [];
+        $themes[$stylesheet] = $cipher;
+        $stored[self::THEMES] = $themes;
+        $this->write($stored);
+
+        return $secret;
+    }
+
+    public function deleteThemeSecret(string $stylesheet): void
+    {
+        $stored = $this->storage->freshArray(Keys::SECRETS);
+        $themes = is_array($stored[self::THEMES] ?? null) ? $stored[self::THEMES] : [];
+        if (! array_key_exists($stylesheet, $themes)) {
+            return;
+        }
+        unset($themes[$stylesheet]);
+        if ([] === $themes) {
+            unset($stored[self::THEMES]);
+        } else {
+            $stored[self::THEMES] = $themes;
+        }
+        $this->write($stored);
+    }
+
+    /**
+     * Keeps a just-generated theme secret for one display to this user (spec call 2): encrypted, never in a URL,
+     * at most SHOWN_TTL seconds.
+     */
+    public function holdForDisplay(int $user, string $stylesheet, string $repo, string $secret): void
+    {
+        $cipher = $this->vault->encrypt($secret, SecretKind::WebhookSecret, self::displayScope($user, $stylesheet, $repo));
+        if (null !== $cipher) {
+            $this->storage->setTransient(self::shownKey($user, $stylesheet), $cipher, self::SHOWN_TTL);
+        }
+    }
+
+    /**
+     * The secret held for this user's display, removed by this read. Null when there is none, it expired, or it is no
+     * longer the theme's current secret (replaced since).
+     */
+    public function takeForDisplay(int $user, string $stylesheet, string $repo): ?string
+    {
+        $key = self::shownKey($user, $stylesheet);
+        $cipher = $this->storage->transient($key);
+        if (null === $cipher) {
+            return null;
+        }
+        $this->storage->deleteTransient($key);
+        $secret = is_string($cipher) ? $this->vault->decrypt($cipher, SecretKind::WebhookSecret, self::displayScope($user, $stylesheet, $repo)) : null;
+
+        return null !== $secret && $secret === $this->themePlain($stylesheet, $repo) ? $secret : null;
+    }
+
+    /** The display transient of one user and theme; the stylesheet is hashed (transient names are short). */
+    public static function shownKey(int $user, string $stylesheet): string
+    {
+        return Keys::SECRET_SHOWN_PREFIX . $user . '_' . md5($stylesheet);
+    }
+
+    private function themePlain(string $stylesheet, string $repo): ?string
+    {
+        $stored = $this->themeCiphers()[$stylesheet] ?? null;
+
+        return is_string($stored) ? $this->vault->decrypt($stored, SecretKind::WebhookSecret, self::themeScope($stylesheet, $repo)) : null;
+    }
+
+    /** @return array<mixed> stylesheet => ciphertext */
+    private function themeCiphers(): array
+    {
+        $themes = $this->stored()[self::THEMES] ?? null;
+
+        return is_array($themes) ? $themes : [];
+    }
+
+    /** Binds a ciphertext to one theme and its repository (owner/repo, case-insensitive like GitHub). */
+    private static function themeScope(string $stylesheet, string $repo): string
+    {
+        return 'theme' . "\0" . $stylesheet . "\0" . strtolower($repo);
+    }
+
+    private static function displayScope(int $user, string $stylesheet, string $repo): string
+    {
+        return 'display' . "\0" . $user . "\0" . self::themeScope($stylesheet, $repo);
     }
 
     /** Drops every database-stored secret (constants are untouched). */

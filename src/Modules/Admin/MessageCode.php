@@ -49,17 +49,8 @@ enum MessageCode: string
     case InstallRunning = 'install_running';
     case FileModsDisallowed = 'file_mods_disallowed';
     case HostChanged = 'host_changed';
-    case WebhookCreated = 'webhook_created';
-    case WebhookExists = 'webhook_exists';
-    case WebhookDuplicate = 'webhook_duplicate';
-    case WebhookRejected = 'webhook_rejected';
-    case WebhookForbidden = 'webhook_forbidden';
-    case WebhookTokenRejected = 'webhook_token_rejected';
-    case WebhookRateLimited = 'webhook_rate_limited';
-    case WebhookFailed = 'webhook_failed';
-    case InvalidWebhookToken = 'invalid_webhook_token';
-    case WebhookNoSecret = 'webhook_no_secret';
-    case WebhookNotHttps = 'webhook_not_https';
+    case ThemeSecretGenerated = 'theme_secret_generated';
+    case WebhookSecretInUse = 'webhook_secret_in_use';
     case Failed = 'failed';
 
     public static function fromReason(string $reason): self
@@ -72,7 +63,7 @@ enum MessageCode: string
         return ! in_array($this, [
             self::SettingsSaved, self::TokenSaved, self::TokenDeleted, self::WebhookSecretSaved,
             self::WebhookSecretDeleted, self::Checked, self::MappingAdded, self::MappingAddedNoTags, self::MappingAddedNoChannelTag, self::MappingRemoved,
-            self::TagSeeded, self::Unfrozen, self::HostConfirmed, self::WebhookCreated, self::WebhookExists,
+            self::TagSeeded, self::Unfrozen, self::HostConfirmed, self::ThemeSecretGenerated,
         ], true);
     }
 
@@ -81,9 +72,6 @@ enum MessageCode: string
     {
         if (self::CheckPartial === $this) {
             return 'warning';
-        }
-        if (self::WebhookExists === $this) {
-            return 'info';
         }
 
         return $this->isError() ? 'error' : 'success';
@@ -131,17 +119,8 @@ enum MessageCode: string
             self::InstallRunning => __('Error: another update or rollback is running. Try again in a minute.', 'pc-theme-release'),
             self::FileModsDisallowed => __('Error: file modifications are disabled on this site (DISALLOW_FILE_MODS).', 'pc-theme-release'),
             self::HostChanged => __('Error: the site address changed. Confirm this site first (top of the screen).', 'pc-theme-release'),
-            self::WebhookCreated => __('Webhook created on GitHub. GitHub sends a ping now; if it does not arrive, Health & log and the delivery alert say why. Revoke the one-time token on GitHub now.', 'pc-theme-release'),
-            self::WebhookExists => __('A webhook on GitHub already points at this site. Nothing was created. Revoke the one-time token on GitHub now.', 'pc-theme-release'),
-            self::WebhookDuplicate => __('Error: GitHub says a webhook with this URL already exists in this repository. Nothing was created.', 'pc-theme-release'),
-            self::WebhookRejected => __('Error: GitHub refused the webhook. Nothing was created. GitHub says:', 'pc-theme-release'),
-            self::WebhookForbidden => __('Error: the one-time token cannot manage this repository\'s webhooks. It needs Webhooks: Read and write, and the token owner must be a repository admin; see the README. Or add the webhook by hand.', 'pc-theme-release'),
-            self::WebhookTokenRejected => __('Error: GitHub did not accept the one-time token (wrong, expired or revoked). Nothing was created.', 'pc-theme-release'),
-            self::WebhookRateLimited => __('Error: GitHub\'s rate limit for this token is reached. Try again later. Nothing was created.', 'pc-theme-release'),
-            self::WebhookFailed => __('Error: GitHub could not be reached or answered unexpectedly. Try again: an existing webhook is found first, so none is created twice.', 'pc-theme-release'),
-            self::InvalidWebhookToken => __('Error: enter a fine-grained personal access token (github_pat_…, 20–255 letters, digits and "_") with Webhooks: Read and write. Nothing was sent to GitHub.', 'pc-theme-release'),
-            self::WebhookNoSecret => __('Error: set the webhook secret first (GitHub tab). Nothing was sent to GitHub.', 'pc-theme-release'),
-            self::WebhookNotHttps => __('Error: this site\'s webhook URL does not start with https://, so the webhook is not created. Serve the site over HTTPS, or add the webhook by hand. Nothing was sent to GitHub.', 'pc-theme-release'),
+            self::ThemeSecretGenerated => __('New webhook secret generated for this theme. Copy it into the webhook on GitHub now: it is shown only this once. Any previous secret of this theme no longer works.', 'pc-theme-release'),
+            self::WebhookSecretInUse => __('Error: a theme still uses the shared webhook secret. Generate its own secret first (Themes → Webhook setup…). Nothing was deleted.', 'pc-theme-release'),
             default => __('Error: the action failed.', 'pc-theme-release'),
         };
     }

@@ -58,7 +58,7 @@ final readonly class DeliveryStatus
 
     /**
      * The last check found this site own hook (exact URL, not a hook on another host): ok, failing, misconfigured
-     * or no deliveries. The Create webhook action is offered only while this is false (spec call 1).
+     * or no deliveries. The Webhook setup link is offered while this is false (per-theme secret spec call 1).
      */
     public function knowsHook(): bool
     {

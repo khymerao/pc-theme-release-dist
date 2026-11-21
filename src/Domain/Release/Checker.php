@@ -183,8 +183,9 @@ final class Checker
 
     /**
      * After every tag check of a cron or Check now round (never for a webhook or a new mapping): the GitHub
-     * delivery log of this site webhook, per repository (spec call 1). Without a webhook secret nothing is read
-     * and every stored result is removed (spec call 15). A repository that is not the mapped one is skipped.
+     * delivery log of this site webhook, per repository (spec call 1). Without any webhook secret nothing is read
+     * and every stored result is removed (spec call 15); a theme without a secret of its own, global or constant is
+     * skipped and its result removed (per-theme secret spec call 7). A repository that is not the mapped one is skipped.
      */
     private function checkDeliveries(): void
     {
@@ -197,8 +198,10 @@ final class Checker
         $prefix = rest_get_url_prefix();
         $notMapped = [RepoState::REPO_PUBLIC, RepoState::REPO_REPLACED, GitHubErrorKind::NotFound->value];
         foreach ($this->mappings->all() as $mapping) {
-            if (in_array($this->state->repo($mapping->repo)->error, $notMapped, true)) {
-                // Not the mapped repository now: what was read about it before no longer applies.
+            $inUse = $this->site->webhookInUseFor($mapping->stylesheet, $mapping->repo->full());
+            if (! $inUse || in_array($this->state->repo($mapping->repo)->error, $notMapped, true)) {
+                // No secret for this theme (it means to receive nothing), or not the mapped repository now: what was
+                // read about it before no longer applies.
                 $this->state->forgetDelivery($mapping->repo);
                 continue;
             }

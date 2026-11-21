@@ -33,10 +33,13 @@ final class SecretVault
         return null !== $this->keyMaterial();
     }
 
-    /** Returns "v2:" . base64(nonce . box) bound to the slot, or null when the salts are too weak to derive a key. */
-    public function encrypt(string $plaintext, SecretKind $kind): ?string
+    /**
+     * Returns "v2:" . base64(nonce . box) bound to the slot (and to $scope, e.g. one theme and its repository), or
+     * null when the salts are too weak to derive a key. An empty scope is the slot's own context.
+     */
+    public function encrypt(string $plaintext, SecretKind $kind, string $scope = ''): ?string
     {
-        $key = $this->key(self::CONTEXT . "\0" . $kind->value);
+        $key = $this->key(self::context($kind, $scope));
         if (null === $key) {
             return null;
         }
@@ -56,13 +59,18 @@ final class SecretVault
      * Returns the plaintext of a value written for this slot, or null when it is corrupt, written for
      * another slot, unbound (legacy), or the salts changed since it was stored.
      */
-    public function decrypt(string $stored, SecretKind $kind): ?string
+    public function decrypt(string $stored, SecretKind $kind, string $scope = ''): ?string
     {
         if (! self::isBound($stored)) {
             return null;
         }
 
-        return $this->open(substr($stored, strlen(self::BOUND_PREFIX)), self::CONTEXT . "\0" . $kind->value);
+        return $this->open(substr($stored, strlen(self::BOUND_PREFIX)), self::context($kind, $scope));
+    }
+
+    private static function context(SecretKind $kind, string $scope): string
+    {
+        return self::CONTEXT . "\0" . $kind->value . ('' === $scope ? '' : "\0" . $scope);
     }
 
     /** The plaintext of a value written before slots were bound, for the one-time migration only. */

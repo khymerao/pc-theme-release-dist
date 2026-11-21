@@ -57,8 +57,8 @@ final class Health
         $secret = $this->secrets->source(SecretKind::WebhookSecret);
         if (SecretSource::InvalidConstant === $secret) {
             $items[] = new HealthItem(HealthItem::CRITICAL, 'webhook_secret_constant_invalid', __('PC_THEME_RELEASE_WEBHOOK_SECRET in wp-config.php is too short (minimum 16 characters), contains control characters or is the documentation example. Webhook deliveries are refused; generate one with: openssl rand -hex 32', 'pc-theme-release'));
-        } elseif (! $secret->isUsable()) {
-            $items[] = new HealthItem(HealthItem::RECOMMENDED, 'webhook_secret_missing', __('No webhook secret is set: updates are found only by the 12-hour check and Check now.', 'pc-theme-release'));
+        } elseif (! $this->webhookUsable()) {
+            $items[] = new HealthItem(HealthItem::RECOMMENDED, 'webhook_secret_missing', __('No webhook secret is set: updates are found only by the 12-hour check and Check now. Set one up per theme: Themes → Webhook setup….', 'pc-theme-release'));
         }
         if (! $this->vault->saltsAreStrong()) {
             $items[] = new HealthItem(HealthItem::RECOMMENDED, 'weak_salts', __('AUTH_KEY / SECURE_AUTH_KEY in wp-config.php are missing or weak, so secrets cannot be stored encrypted. Use the wp-config constants.', 'pc-theme-release'));
@@ -167,23 +167,32 @@ final class Health
         return 'https://github.com/' . rawurlencode($repo->owner) . '/' . rawurlencode($repo->name) . '/settings/hooks' . ($hookId > 0 ? '/' . $hookId : '');
     }
 
-    /** The settings page of this site stored hook of $repo (exact match only), else the repository webhooks page. */
-    public function hookLink(RepoName $repo): string
+    /** A secret that verifies deliveries exists: the constant or the shared one, or a managed theme's own (A29). */
+    private function webhookUsable(): bool
     {
-        $stored = $this->state->delivery($repo);
+        if (null !== $this->secrets->webhookSecret()) {
+            return true;
+        }
+        foreach ($this->offers->all() as $status) {
+            if ($this->site->webhookInUseFor($status->mapping->stylesheet, $status->mapping->repo->full())) {
+                return true;
+            }
+        }
 
-        return self::hooksPage($repo, null !== $stored && $stored->knowsHook() ? $stored->hookId : 0);
+        return false;
     }
 
     /** @return list<array{0: RepoName, 1: DeliveryStatus}> Effective results of the mapped repositories. */
     private function deliveries(): array
     {
-        if (! $this->site->webhookInUse()) {
-            return [];
-        }
         $now = $this->env->now();
         $results = [];
-        foreach ($this->offers->repos() as $repo) {
+        foreach ($this->offers->all() as $status) {
+            $repo = $status->mapping->repo;
+            // Only a theme with a secret (own, global or constant) means to receive deliveries (spec call 7).
+            if (! $this->site->webhookInUseFor($status->mapping->stylesheet, $repo->full())) {
+                continue;
+            }
             $stored = $this->state->delivery($repo);
             if (null !== $stored) {
                 $results[] = [$repo, $stored->effective($this->state->received($repo), $now)];

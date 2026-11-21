@@ -12,24 +12,8 @@ final class WpHttpClient implements HttpClient
 {
     public function get(string $url, array $headers, int $timeout, ?string $saveTo, int $maxBytes): array
     {
-        return $this->send('GET', $url, $headers, null, $timeout, $saveTo, $maxBytes);
-    }
-
-    public function post(string $url, array $headers, string $body, int $timeout, int $maxBytes): array
-    {
-        return $this->send('POST', $url, $headers, $body, $timeout, null, $maxBytes);
-    }
-
-    /**
-     * @param array<string, string> $headers
-     * @return array{status: int, headers: array<string, string>, body: string}
-     *
-     * @throws GitHubError
-     */
-    private function send(string $method, string $url, array $headers, ?string $body, int $timeout, ?string $saveTo, int $maxBytes): array
-    {
         $args = [
-            'method' => $method,
+            'method' => 'GET',
             'timeout' => $timeout,
             // Explicit, but other code can still switch it off through `http_request_args` or
             // `https_ssl_verify`: GitHub\TlsPolicy forces it back on for the GitHub hosts, filtered last (audit N9).
@@ -40,9 +24,6 @@ final class WpHttpClient implements HttpClient
             'user-agent' => 'pc-theme-release',
             'reject_unsafe_urls' => true,
         ];
-        if (null !== $body) {
-            $args['body'] = $body;
-        }
         if (null !== $saveTo) {
             $args['stream'] = true;
             $args['filename'] = $saveTo;

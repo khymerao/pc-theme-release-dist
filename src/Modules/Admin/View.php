@@ -21,20 +21,6 @@ final class View
     }
 
     /**
-     * A notice whose last paragraph is one link (built by the caller from stored state, never from the URL).
-     *
-     * @param list<string> $details
-     */
-    public static function linkNotice(string $type, string $message, array $details, string $url, string $label): void
-    {
-        echo '<div class="' . esc_attr('notice notice-' . $type . ' is-dismissible') . '"' . ('error' === $type ? ' role="alert"' : '') . '><p>' . esc_html($message) . '</p>';
-        foreach ($details as $detail) {
-            echo '<p>' . esc_html($detail) . '</p>';
-        }
-        echo '<p><a href="' . esc_url($url) . '">' . esc_html($label) . '</a></p></div>';
-    }
-
-    /**
      * The webhook delivery alert: one error notice (not dismissible while the failure lasts) listing every failing
      * repository with a link to its webhook on GitHub, then a link to the Health and log tab. Nothing when empty.
      *

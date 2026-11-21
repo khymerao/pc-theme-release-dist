@@ -69,13 +69,19 @@ final class SiteContext
         return null !== $this->channel() && $source->isUsable();
     }
 
-    /**
-     * A usable webhook secret is set, so the site means to receive deliveries: the same answer the webhook
-     * endpoint uses to accept them. Gates the delivery check and its alerts.
-     */
+    /** A webhook secret exists anywhere (constant, global or a theme's own): the site means to receive deliveries. */
     public function webhookInUse(): bool
     {
-        return null !== $this->secrets->webhookSecret();
+        return $this->secrets->anyWebhookSecret();
+    }
+
+    /**
+     * This theme has a secret that verifies its deliveries (own, global or constant): the same answer the webhook
+     * endpoint uses to accept them. Gates the delivery check and its alerts per theme (spec call 7).
+     */
+    public function webhookInUseFor(string $stylesheet, string $repo): bool
+    {
+        return null !== $this->secrets->webhookSecretFor($stylesheet, $repo);
     }
 
     /**

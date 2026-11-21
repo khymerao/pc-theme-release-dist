@@ -68,54 +68,6 @@ final class DeliveryCheck
     }
 
     /**
-     * Create webhook (spec calls 2-4): reads the hooks first; when one already points at exactly this site endpoint
-     * nothing is created ("exists"). Else POSTs the hook; on 201 the new hook id is stored and the delivery check runs
-     * at once with the same client. A check that cannot see the new hook (no permission, not listed yet, an error)
-     * keeps the stored id. The secret goes to GitHub only; nothing here stores it.
-     *
-     * @return array{result: 'created'|'exists'|'duplicate'|'rejected', id: int, message: string}
-     *
-     * @throws GitHubError From the hooks read or the create request.
-     */
-    public function create(RepoName $repo, string $endpoint, string $restPrefix, string $secret): array
-    {
-        $existing = self::thisSiteHook($this->github->hooks($repo), $endpoint, $restPrefix);
-        if (null !== $existing) {
-            $this->check($repo, $endpoint, $restPrefix);
-
-            return ['result' => 'exists', 'id' => $existing['id'], 'message' => ''];
-        }
-        $created = $this->github->createHook($repo, $endpoint, $secret);
-        if ('created' !== $created['result']) {
-            return $created;
-        }
-        $id = $created['id'];
-        $stored = new DeliveryStatus(DeliveryStatus::NO_DELIVERIES, $id, '', 0, [], 0, 0, 0, $this->env->now());
-        $this->state->saveDelivery($repo, $stored);
-        $this->check($repo, $endpoint, $restPrefix);
-        $after = $this->state->delivery($repo);
-        if (null === $after || ! $after->knowsHook() || $id !== $after->hookId) {
-            $this->state->saveDelivery($repo, $stored);
-        }
-
-        return $created;
-    }
-
-    /**
-     * The hook whose URL is exactly this site endpoint, or null. A hook on another host (a proxy fallback of
-     * matchHook) is another site and never counts here (spec edge: staging and production share a repository).
-     *
-     * @param list<array{id: int, active: bool, events: list<string>, url: string, content_type: string}> $hooks
-     * @return array{id: int, active: bool, events: list<string>, url: string, content_type: string}|null
-     */
-    public static function thisSiteHook(array $hooks, string $endpoint, string $restPrefix): ?array
-    {
-        $match = self::matchHook($hooks, $endpoint, $restPrefix);
-
-        return null !== $match && '' === $match[1] ? $match[0] : null;
-    }
-
-    /**
      * @param array{id: int, active: bool, events: list<string>, url: string, content_type: string} $hook
      * @param list<array{delivered_at: int, status: string, status_code: int}> $deliveries
      */
