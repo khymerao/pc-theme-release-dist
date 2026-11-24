@@ -9,6 +9,8 @@ use ProCoders\ThemeRelease\Core\Support\Keys;
 use ProCoders\ThemeRelease\Core\Support\Storage;
 use ProCoders\ThemeRelease\Domain\Release\Checker;
 use ProCoders\ThemeRelease\Domain\Release\UpdateTransient;
+use ProCoders\ThemeRelease\Domain\SelfUpdate\Lookup;
+use ProCoders\ThemeRelease\Domain\SelfUpdate\Source;
 
 /**
  * Activation, deactivation and uninstall (spec call 12), the 12-hour check's schedule, and the inert
@@ -103,11 +105,15 @@ final class Module
         self::stopAutoloadingSettings();
     }
 
-    /** Unschedules the check and withdraws the plugin's entries from core's update list (audit S3). */
+    /**
+     * Unschedules the check and withdraws the plugin's entries from core's update lists (audit S3): the theme
+     * entries, and its own plugin update, whose install check (self-update C5) is not loaded while it is inactive.
+     */
     public static function onDeactivate(): void
     {
         self::unschedule();
         UpdateTransient::stripOwnEntries(new Storage());
+        Lookup::withdrawOffer(plugin_basename(dirname(__DIR__, 3) . '/' . Source::MAIN_FILE));
     }
 
     /**
@@ -123,6 +129,7 @@ final class Module
         foreach (Keys::options() as $option) {
             $storage->delete($option);
         }
+        $storage->deleteSite(Keys::SELF_UPDATE);
         $storage->purgeTransients(Keys::PREFIX);
     }
 

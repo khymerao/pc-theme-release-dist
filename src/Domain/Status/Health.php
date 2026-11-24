@@ -15,6 +15,7 @@ use ProCoders\ThemeRelease\Core\Support\Keys;
 use ProCoders\ThemeRelease\Core\GitHub\RepoName;
 use ProCoders\ThemeRelease\Domain\Release\DeliveryStatus;
 use ProCoders\ThemeRelease\Domain\Release\StateStore;
+use ProCoders\ThemeRelease\Domain\SelfUpdate\Lookup;
 
 /**
  * The plugin's health in three groups — configuration, the scheduled check, the repositories — shared by
@@ -38,6 +39,7 @@ final class Health
         private readonly StateStore $state,
         private readonly Environment $env,
         private readonly Offers $offers,
+        private readonly Lookup $pluginUpdates,
     ) {
     }
 
@@ -140,6 +142,54 @@ final class Health
         }
 
         return $items;
+    }
+
+    /**
+     * The "Plugin update check" row of the Health & log tab (spec C9): the last lookup of the plugin's own latest
+     * version, as stored; Good after a success (or before any check), Recommended after a failure or when a
+     * PCTR_SELF_UPDATE_* constant is invalid (the default is used then).
+     */
+    public function pluginUpdate(): HealthItem
+    {
+        $source = $this->pluginUpdates->source();
+        $state = $this->pluginUpdates->state();
+        $where = $source->repo->full() . ' (' . $source->branch . ')';
+        if ('' !== $state['error']) {
+            $known = '' !== $state['version']
+                /* translators: %s: version. */
+                ? sprintf(__('Version %s, found earlier, is still offered.', 'pc-theme-release'), $state['version'])
+                : __('No update can be offered until a check succeeds.', 'pc-theme-release');
+            /* translators: 1: repository (branch), 2: reason, 3: date and time, 4: what is still offered. */
+            $item = new HealthItem(HealthItem::RECOMMENDED, 'plugin_update_failed', sprintf(__('Plugin update check: reading %1$s failed (%2$s) at %3$s. %4$s', 'pc-theme-release'), $where, self::pluginUpdateReason($state['error'], $state['status']), Environment::date('Y-m-d H:i', $state['failed_at']), $known));
+        } elseif ($state['checked_at'] > 0) {
+            /* translators: 1: version, 2: repository (branch), 3: date and time. */
+            $item = new HealthItem(HealthItem::GOOD, 'plugin_update_ok', sprintf(__('Plugin update check: the latest version is %1$s on %2$s. Checked: %3$s.', 'pc-theme-release'), $state['version'], $where, Environment::date('Y-m-d H:i', $state['checked_at'])));
+        } else {
+            /* translators: %s: repository (branch). */
+            $item = new HealthItem(HealthItem::GOOD, 'plugin_update_not_checked', sprintf(__('Plugin update check: not run yet. WordPress checks %s for a new plugin version by itself (Dashboard → Updates).', 'pc-theme-release'), $where));
+        }
+        if ([] === $source->invalid) {
+            return $item;
+        }
+        /* translators: 1: constant names, 2: the check's own text. */
+        $label = sprintf(__('%1$s in wp-config.php is not valid and is ignored; the default is used. %2$s', 'pc-theme-release'), implode(', ', $source->invalid), $item->label);
+
+        return new HealthItem(HealthItem::RECOMMENDED, 'plugin_update_source_invalid', $label);
+    }
+
+    private static function pluginUpdateReason(string $error, int $status): string
+    {
+        return match ($error) {
+            'transport' => __('no answer from GitHub', 'pc-theme-release'),
+            'not_found' => __('HTTP 404: the repository or branch does not exist or is private', 'pc-theme-release'),
+            /* translators: %d: HTTP status. */
+            'rate_limited' => sprintf(__('HTTP %d: GitHub limits requests from this server; it is tried again later', 'pc-theme-release'), $status),
+            'too_large' => __('the answer is too large', 'pc-theme-release'),
+            'invalid' => __('pc-theme-release.php there has no valid Version, Requires PHP or Requires at least header', 'pc-theme-release'),
+            'prerelease' => __('the branch holds a pre-release version, which is never offered', 'pc-theme-release'),
+            /* translators: %d: HTTP status. */
+            default => sprintf(__('HTTP %d', 'pc-theme-release'), $status),
+        };
     }
 
     /**

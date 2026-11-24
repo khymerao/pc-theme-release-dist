@@ -100,7 +100,7 @@ final class Screen
         } elseif (Tab::GitHub === $tab) {
             $this->renderGitHub();
         } elseif (Tab::Health === $tab) {
-            $this->renderHealth(array_merge($items, $this->health->webhook()));
+            $this->renderHealth(array_merge($items, $this->health->webhook(), [$this->health->pluginUpdate()]));
         } else {
             $this->themes->render($input);
         }

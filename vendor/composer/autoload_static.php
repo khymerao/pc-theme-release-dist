@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe
+class ComposerStaticInit01899ed07adb5e11c3d985293d56b72b
 {
     public static $prefixLengthsPsr4 = array (
         'P' =>
@@ -51,6 +51,8 @@ class ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe
         'ProCoders\\ThemeRelease\\Domain\\Release\\StateStore' => __DIR__ . '/../..' . '/src/Domain/Release/StateStore.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\StatusLog' => __DIR__ . '/../..' . '/src/Domain/Release/StatusLog.php',
         'ProCoders\\ThemeRelease\\Domain\\Release\\UpdateTransient' => __DIR__ . '/../..' . '/src/Domain/Release/UpdateTransient.php',
+        'ProCoders\\ThemeRelease\\Domain\\SelfUpdate\\Lookup' => __DIR__ . '/../..' . '/src/Domain/SelfUpdate/Lookup.php',
+        'ProCoders\\ThemeRelease\\Domain\\SelfUpdate\\Source' => __DIR__ . '/../..' . '/src/Domain/SelfUpdate/Source.php',
         'ProCoders\\ThemeRelease\\Domain\\Status\\Health' => __DIR__ . '/../..' . '/src/Domain/Status/Health.php',
         'ProCoders\\ThemeRelease\\Domain\\Status\\HealthItem' => __DIR__ . '/../..' . '/src/Domain/Status/HealthItem.php',
         'ProCoders\\ThemeRelease\\Domain\\Status\\Offers' => __DIR__ . '/../..' . '/src/Domain/Status/Offers.php',
@@ -71,6 +73,7 @@ class ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe
         'ProCoders\\ThemeRelease\\Modules\\Admin\\View' => __DIR__ . '/../..' . '/src/Modules/Admin/View.php',
         'ProCoders\\ThemeRelease\\Modules\\Health\\Module' => __DIR__ . '/../..' . '/src/Modules/Health/Module.php',
         'ProCoders\\ThemeRelease\\Modules\\Lifecycle\\Module' => __DIR__ . '/../..' . '/src/Modules/Lifecycle/Module.php',
+        'ProCoders\\ThemeRelease\\Modules\\SelfUpdate\\Module' => __DIR__ . '/../..' . '/src/Modules/SelfUpdate/Module.php',
         'ProCoders\\ThemeRelease\\Modules\\Update\\CoreUpgrader' => __DIR__ . '/../..' . '/src/Modules/Update/CoreUpgrader.php',
         'ProCoders\\ThemeRelease\\Modules\\Update\\InstallFlow' => __DIR__ . '/../..' . '/src/Modules/Update/InstallFlow.php',
         'ProCoders\\ThemeRelease\\Modules\\Update\\InstallMode' => __DIR__ . '/../..' . '/src/Modules/Update/InstallMode.php',
@@ -86,9 +89,9 @@ class ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInit8595325e3e90890c18684e8ab0a34bfe::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit01899ed07adb5e11c3d985293d56b72b::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit01899ed07adb5e11c3d985293d56b72b::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit01899ed07adb5e11c3d985293d56b72b::$classMap;
 
         }, null, ClassLoader::class);
     }

@@ -8,6 +8,7 @@ use ProCoders\ThemeRelease\Core\GitHub\TlsPolicy;
 use ProCoders\ThemeRelease\Modules\Admin\Module as AdminModule;
 use ProCoders\ThemeRelease\Modules\Health\Module as HealthModule;
 use ProCoders\ThemeRelease\Modules\Lifecycle\Module as LifecycleModule;
+use ProCoders\ThemeRelease\Modules\SelfUpdate\Module as SelfUpdateModule;
 use ProCoders\ThemeRelease\Modules\Update\Module as UpdateModule;
 use ProCoders\ThemeRelease\Modules\Webhook\Module as WebhookModule;
 
@@ -20,12 +21,15 @@ final class Plugin
 {
     public static function boot(): void
     {
+        $s = new Services();
+        // The plugin's own updates, before the inert gate: core's plugin update list is network-wide (spec C10).
+        SelfUpdateModule::hook(static fn (): SelfUpdateModule => new SelfUpdateModule($s->selfUpdate()));
+        // Its lookup runs on every site of a network, so TLS forcing (two filters, nothing built) comes first too.
+        TlsPolicy::register();
         if (LifecycleModule::inert()) {
             LifecycleModule::registerInert();
             return;
         }
-        $s = new Services();
-        TlsPolicy::register();
         LifecycleModule::hook(static fn (): LifecycleModule => new LifecycleModule($s->checker()));
         UpdateModule::hook(static fn (): UpdateModule => $s->update());
         WebhookModule::hook(static fn (): WebhookModule => new WebhookModule($s->site(), $s->secrets(), $s->checker(), $s->state(), $s->log(), $s->storage(), $s->env(), $s->mappings()));

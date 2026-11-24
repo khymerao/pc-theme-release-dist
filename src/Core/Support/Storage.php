@@ -115,6 +115,29 @@ final class Storage
         delete_option($key);
     }
 
+    /**
+     * A network-wide option (the options table on a single site, sitemeta on a multisite network); never autoloaded.
+     *
+     * @return array<string, mixed> The option as an array; anything else reads as empty.
+     */
+    public function getSiteArray(string $key): array
+    {
+        $value = get_site_option($key, []);
+
+        return is_array($value) ? $value : [];
+    }
+
+    /** @param array<string, mixed> $value */
+    public function setSite(string $key, array $value): void
+    {
+        update_site_option($key, $value);
+    }
+
+    public function deleteSite(string $key): void
+    {
+        delete_site_option($key);
+    }
+
     /** Null when the entry is missing or expired. */
     public function transient(string $key): mixed
     {

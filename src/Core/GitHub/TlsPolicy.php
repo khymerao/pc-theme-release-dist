@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace ProCoders\ThemeRelease\Core\GitHub;
 
 /**
- * TLS verification for the two GitHub hosts cannot be switched off by another plugin (audit N9): both
+ * TLS verification for the GitHub hosts cannot be switched off by another plugin (audit N9): both
  * places WordPress lets code change it, filtered last. Other hosts are left alone. Builds nothing.
  */
 final class TlsPolicy
 {
-    private const array HOSTS = ['api.github.com', GitHubClient::DOWNLOAD_HOST];
+    /** The theme API and downloads, and the plugin's own update lookup and tag archive (self-update). */
+    private const array HOSTS = ['api.github.com', GitHubClient::DOWNLOAD_HOST, 'raw.githubusercontent.com', 'github.com'];
 
     public static function register(): void
     {

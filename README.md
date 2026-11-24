@@ -77,6 +77,39 @@ now** also read GitHub's *Recent Deliveries* of the webhook that points at this 
   **Webhooks: Read-only**, or the last reading is more than 48 hours old.
 - Not wanted: remove the webhook on GitHub (updates then come only from the 12-hour check and Check now).
 
+## Plugin updates
+
+The plugin updates itself like any WordPress plugin (**Plugins**, **Dashboard -> Updates**, optional
+**Enable auto-updates**; auto-updates are off until you switch them on). Its header says
+`Update URI: https://github.com/khymerao/pc-theme-release-dist`, so WordPress asks the plugin, not wordpress.org:
+
+- The latest version is the `Version:` of `pc-theme-release.php` on the `main` branch of the **public** dist repository,
+  read from `raw.githubusercontent.com` (no token, no GitHub API quota). It is checked at most once an hour (**Check
+  again** on Dashboard -> Updates checks at once, at most once a minute), and after a failure again in 15 min, 1 h,
+  then every 6 h. A pre-release version is never offered.
+- The package is the tag archive `https://github.com/khymerao/pc-theme-release-dist/archive/refs/tags/v<version>.zip`.
+  Before WordPress replaces anything, the plugin checks that the unpacked `pc-theme-release.php` has exactly the offered
+  version and renames the folder to the installed one; anything else is refused and nothing is replaced.
+- No token or site data is sent. The theme token is never used for the plugin's own updates.
+- **Health & log** shows the row **Plugin update check**: the latest version and when it was checked, or why the last
+  check failed (for example HTTP 404 when the dist repository is private or missing).
+- **Sites on 1.6.1 or older** have `Update URI: false` and get no update notice: install the first self-updating
+  version once by hand (**Plugins -> Add New -> Upload Plugin**, the release zip, **Replace current with uploaded**).
+  Later versions arrive as normal updates.
+- Multisite: the update is offered network-wide (Network Admin -> Plugins).
+
+Developers can point a site at a fork or another branch in `wp-config.php` (never an admin setting, so nobody can
+redirect updates from the dashboard):
+
+```php
+define( 'PCTR_SELF_UPDATE_REPO', 'owner/pc-theme-release-dist' ); // default khymerao/pc-theme-release-dist
+define( 'PCTR_SELF_UPDATE_BRANCH', 'next' );                     // default main
+```
+
+The branch name may use letters, digits, `.`, `_`, `-` and `/` (at most 100 characters; no part may be empty or start
+with `.` or `-`, no `..`, not ending in `.lock`). The branch is where the version is read; the package is still the tag archive `v<version>` of that repository. An
+invalid value is ignored (the default is used) and **Health & log** says so.
+
 ## Notes
 
 - Access: `manage_options` and `update_themes`. With `DISALLOW_FILE_MODS`: `manage_options` only, updates off,

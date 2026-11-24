@@ -14,6 +14,8 @@ use ProCoders\ThemeRelease\Core\Support\Storage;
 use ProCoders\ThemeRelease\Domain\Release\Checker;
 use ProCoders\ThemeRelease\Domain\Release\StateStore;
 use ProCoders\ThemeRelease\Domain\Release\StatusLog;
+use ProCoders\ThemeRelease\Domain\SelfUpdate\Lookup;
+use ProCoders\ThemeRelease\Domain\SelfUpdate\Source;
 use ProCoders\ThemeRelease\Domain\Status\Health;
 use ProCoders\ThemeRelease\Domain\Status\Offers;
 use ProCoders\ThemeRelease\Domain\Theme\MappingRepository;
@@ -40,6 +42,7 @@ final class Services
     private ?Checker $checker = null;
     private ?Health $health = null;
     private ?UpdateModule $update = null;
+    private ?Lookup $selfUpdate = null;
 
     public function storage(): Storage
     {
@@ -109,12 +112,18 @@ final class Services
 
     public function health(): Health
     {
-        return $this->health ??= new Health($this->site(), $this->secrets(), $this->vault(), $this->state(), $this->env(), $this->offers());
+        return $this->health ??= new Health($this->site(), $this->secrets(), $this->vault(), $this->state(), $this->env(), $this->offers(), $this->selfUpdate());
     }
 
     /** The Update module is a service too: the plugin screen's rollback and switch go through its installs(). */
     public function update(): UpdateModule
     {
         return $this->update ??= new UpdateModule($this->site(), $this->mappings(), $this->offers(), $this->github(), $this->themes(), $this->log(), $this->env(), $this->checker());
+    }
+
+    /** The plugin's own update lookup: no token, no theme setting (spec C10); the source comes from code or wp-config. */
+    public function selfUpdate(): Lookup
+    {
+        return $this->selfUpdate ??= new Lookup(new WpHttpClient(), $this->storage(), $this->env(), Source::fromEnvironment($this->env()));
     }
 }

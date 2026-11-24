@@ -22,6 +22,8 @@ final class Keys
     public const string COMPARE_PREFIX = 'pc_theme_release_cmp_';
     /** A just-generated theme webhook secret (encrypted), per user and theme, for one display (removed with the PREFIX transients). */
     public const string SECRET_SHOWN_PREFIX = 'pc_theme_release_whsec_';
+    /** The plugin's own update lookup (site option, network-wide; deleted on uninstall). */
+    public const string SELF_UPDATE = 'pc_theme_release_self_update';
     public const string CRON_HOOK = 'pc_theme_release_check';
     public const string LOCK = 'pc_theme_release';
     public const string PAGE_SLUG = 'pc-theme-release';
