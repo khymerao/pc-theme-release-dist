@@ -108,12 +108,34 @@ final class Module
     /**
      * Unschedules the check and withdraws the plugin's entries from core's update lists (audit S3): the theme
      * entries, and its own plugin update, whose install check (self-update C5) is not loaded while it is inactive.
+     * Core passes whether this is a network deactivation.
      */
-    public static function onDeactivate(): void
+    public static function onDeactivate(mixed $networkDeactivating = false): void
     {
         self::unschedule();
         UpdateTransient::stripOwnEntries(new Storage());
-        Lookup::withdrawOffer(plugin_basename(dirname(__DIR__, 3) . '/' . Source::MAIN_FILE));
+        $basename = plugin_basename(dirname(__DIR__, 3) . '/' . Source::MAIN_FILE);
+        if (! self::offerStays($basename, true === $networkDeactivating)) {
+            Lookup::withdrawOffer($basename);
+        }
+    }
+
+    /**
+     * Whether the network-wide plugin update offer stays valid after this deactivation (review R3): on a network the
+     * plugin is still loaded where updates are installed, i.e. still network-active or active on the main site. Core
+     * runs this hook before it writes the active lists, so the state after it is worked out here: a network
+     * deactivation ends the network activation; any deactivation on the main site counts as ending its activation there
+     * too (core's bool cannot tell whether that list is cleared as well; a withdrawn offer returns at the next check).
+     */
+    private static function offerStays(string $basename, bool $networkDeactivating): bool
+    {
+        if (! is_multisite()) {
+            return false;
+        }
+        $network = ! $networkDeactivating && Lookup::networkActive($basename);
+        $main = ! is_main_site() && Lookup::mainSiteActive($basename);
+
+        return $network || $main;
     }
 
     /**

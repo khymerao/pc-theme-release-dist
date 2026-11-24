@@ -127,10 +127,21 @@ final class Storage
         return is_array($value) ? $value : [];
     }
 
-    /** @param array<string, mixed> $value */
+    /**
+     * On a single site update_site_option() is update_option() with the default autoload, so the row would be loaded on
+     * every request: written there with autoload off instead (an autoloaded row of an older version turns off at the
+     * next write). On a network, sitemeta has no autoload.
+     *
+     * @param array<string, mixed> $value
+     */
     public function setSite(string $key, array $value): void
     {
-        update_site_option($key, $value);
+        if (is_multisite()) {
+            update_site_option($key, $value);
+
+            return;
+        }
+        update_option($key, $value, false);
     }
 
     public function deleteSite(string $key): void

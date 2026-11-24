@@ -12,7 +12,8 @@ use ProCoders\ThemeRelease\Domain\SelfUpdate\Source;
  * github.com, so core asks `update_plugins_github.com` for this plugin; the answer offers the tag archive of the
  * dist repository. "View details" is answered here (never wordpress.org), and the unpacked archive is checked and
  * renamed to the installed folder before core replaces anything. Registered before the multisite inert gate, so a
- * check run from a subsite keeps the offer in the network-wide list (C10). Builds nothing until a hook needs it.
+ * check run from a subsite keeps the offer in the network-wide list (C10), as long as the plugin is network-active or
+ * active on the main site, where Network Admin installs it (review R1). Builds nothing until a hook needs it.
  */
 final class Module
 {
@@ -80,6 +81,11 @@ final class Module
         if (! is_string($pluginFile) || self::basename() !== $pluginFile) {
             return $update;
         }
+        // Network Admin installs the update without the plugin loaded unless it is network-active or active on the
+        // main site: then nothing renames the unpacked folder, so nothing is offered (review R1).
+        if (! Lookup::installable($pluginFile)) {
+            return $update;
+        }
 
         return self::instance()->entry($update, self::forced());
     }
@@ -137,6 +143,8 @@ final class Module
         $info = [
             'name' => 'ProCoders Theme Release',
             'slug' => self::SLUG,
+            // Not a wordpress.org plugin: core then prints no "WordPress.org Plugin Page" link (review R4).
+            'external' => true,
             'version' => $release['version'] ?? (string) ($installed['version'] ?? ''),
             'author' => 'ProCoders',
             'homepage' => $source->homepage(),
@@ -147,7 +155,11 @@ final class Module
                     . ' <a href="' . esc_url($source->tagsUrl()) . '" target="_blank" rel="noopener noreferrer">' . esc_html($source->repo->full()) . '</a></p>',
             ],
         ];
-        if (null !== $release) {
+        // "Install Now" in the modal is core's plugin install, which passes no hook_extra['plugin']: the package is not
+        // renamed then, so it would land beside a renamed folder as a second copy (review R5). And where the install
+        // check is not loaded, no install is offered at all (R1).
+        $basename = self::basename();
+        if (null !== $release && self::SLUG === dirname($basename) && Lookup::installable($basename)) {
             $info['download_link'] = $source->packageUrl($release['version']);
         }
 
@@ -184,10 +196,27 @@ final class Module
         }
         $dir = rtrim($source, '/');
         $root = rtrim($remoteSource, '/');
-        $main = $dir . '/' . Source::MAIN_FILE;
+        $noMain = __('The ProCoders Theme Release package has no pc-theme-release.php in its top-level folder. Nothing was replaced.', 'pc-theme-release');
+        if (dirname($dir) !== $root) {
+            return self::refuse($noMain);
+        }
+        global $wp_filesystem;
+        $filesystem = $wp_filesystem instanceof \WP_Filesystem_Base ? $wp_filesystem : null;
+        // $source is a path of $wp_filesystem (an FTP or SSH root); PHP's own file functions need the local one, as
+        // core's check_package() translates it (review R2). move() and the return value keep the remote paths.
+        $local = self::localPath($dir, $filesystem);
+        $main = $local . '/' . Source::MAIN_FILE;
+        // The folder is there (the filesystem sees it) but PHP cannot read it: say so, not "no pc-theme-release.php".
+        $seen = is_dir($local) || (! is_link($local) && null !== $filesystem && $filesystem->is_dir($dir));
+        if ($seen && ! is_readable($local)) {
+            return self::refuse(__('The ProCoders Theme Release package folder could not be read. Nothing was replaced.', 'pc-theme-release'));
+        }
         // A symlinked folder or main file could point outside the package: never followed.
-        if (dirname($dir) !== $root || is_link($dir) || is_link($main) || ! is_dir($dir) || ! is_file($main)) {
-            return self::refuse(__('The ProCoders Theme Release package has no pc-theme-release.php in its top-level folder. Nothing was replaced.', 'pc-theme-release'));
+        if (is_link($local) || is_link($main) || ! is_dir($local) || ! is_file($main)) {
+            return self::refuse($noMain);
+        }
+        if (! is_readable($main)) {
+            return self::refuse(__('The ProCoders Theme Release package folder could not be read. Nothing was replaced.', 'pc-theme-release'));
         }
         $headers = get_file_data($main, ['version' => 'Version', 'requires_php' => 'Requires PHP', 'requires' => 'Requires at least']);
         if (($headers['version'] ?? '') !== $offered['version']) {
@@ -214,12 +243,23 @@ final class Module
         if ($dir === $target) {
             return $target . '/';
         }
-        global $wp_filesystem;
-        if (! $wp_filesystem instanceof \WP_Filesystem_Base || ! $wp_filesystem->move($dir, $target, true)) {
+        if (null === $filesystem || ! $filesystem->move($dir, $target, true)) {
             return self::refuse(__('The ProCoders Theme Release package folder could not be renamed. Nothing was replaced.', 'pc-theme-release'));
         }
 
         return $target . '/';
+    }
+
+    /** A path of the upgrader's filesystem as a local path: core's own translation (class-plugin-upgrader.php). */
+    private static function localPath(string $path, ?\WP_Filesystem_Base $filesystem): string
+    {
+        $contentDir = null === $filesystem ? false : $filesystem->wp_content_dir();
+        // Unknown: the path is used as is (the checks then refuse what PHP cannot read).
+        if (! is_string($contentDir) || '' === $contentDir) {
+            return $path;
+        }
+
+        return str_replace($contentDir, trailingslashit(WP_CONTENT_DIR), $path);
     }
 
     /**

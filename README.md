@@ -96,7 +96,9 @@ The plugin updates itself like any WordPress plugin (**Plugins**, **Dashboard ->
 - **Sites on 1.6.1 or older** have `Update URI: false` and get no update notice: install the first self-updating
   version once by hand (**Plugins -> Add New -> Upload Plugin**, the release zip, **Replace current with uploaded**).
   Later versions arrive as normal updates.
-- Multisite: the update is offered network-wide (Network Admin -> Plugins).
+- Multisite: the update is offered network-wide (Network Admin -> Plugins) when the plugin is network-active or active
+  on the main site. Activated on another site only, no update is offered: Network Admin would install it without the
+  plugin's own package check.
 
 Developers can point a site at a fork or another branch in `wp-config.php` (never an admin setting, so nobody can
 redirect updates from the dashboard):

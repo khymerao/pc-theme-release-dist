@@ -3,7 +3,7 @@
 /**
  * Plugin Name:       ProCoders Theme Release
  * Description:       Offers channel tags of private GitHub theme repositories as standard WordPress theme updates (staging or production), with webhook, rollback and freeze.
- * Version:           1.7.0
+ * Version:           1.7.1
  * Requires at least: 6.4
  * Requires PHP:      8.3
  * Author:            ProCoders

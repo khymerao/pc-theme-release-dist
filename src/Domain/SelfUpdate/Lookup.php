@@ -88,6 +88,14 @@ final class Lookup
         foreach (['checked_at', 'failed_at', 'failures', 'status'] as $field) {
             $state[$field] = is_int($stored[$field] ?? null) ? $stored[$field] : 0;
         }
+        // A stored version that may not be offered (a pre-release left in the option) is no known version: its etag
+        // would turn the next check into a 304 for it, and Health would name it. The next check is due at once and is
+        // a full GET; the failure fields stay, so a back-off still holds.
+        if ('' !== $state['version'] && ! self::offerable($state['version'])) {
+            $state['version'] = '';
+            $state['etag'] = '';
+            $state['checked_at'] = 0;
+        }
 
         return $state;
     }
@@ -112,6 +120,36 @@ final class Lookup
         if ($changed) {
             set_site_transient('update_plugins', $updates);
         }
+    }
+
+    /**
+     * Whether the plugin is loaded where its update is installed, so its install check runs (review R1). Always on a
+     * single site (reads nothing). On a network core installs from Network Admin, which runs as the main site: the
+     * plugin must be network-active or active on the main site; activated on another site only, nothing is offered.
+     */
+    public static function installable(string $basename): bool
+    {
+        if (! is_multisite()) {
+            return true;
+        }
+
+        return self::networkActive($basename) || self::mainSiteActive($basename);
+    }
+
+    /** Network-activated (multisite only). */
+    public static function networkActive(string $basename): bool
+    {
+        $sitewide = get_site_option('active_sitewide_plugins', []);
+
+        return is_array($sitewide) && isset($sitewide[$basename]);
+    }
+
+    /** Activated on the main site of the network itself (multisite only). */
+    public static function mainSiteActive(string $basename): bool
+    {
+        $active = is_main_site() ? get_option('active_plugins', []) : get_blog_option(get_main_site_id(), 'active_plugins', []);
+
+        return is_array($active) && in_array($basename, $active, true);
     }
 
     /** Whether a version is one the plugin may offer (and put into the package URL). */
@@ -202,6 +240,8 @@ final class Lookup
     private function succeeded(array $state, int $status): array
     {
         $state['checked_at'] = $this->env->now();
+        // A failure stamp left behind would still count in the floor of a forced check (the later of both stamps).
+        $state['failed_at'] = 0;
         $state['failures'] = 0;
         $state['error'] = '';
         $state['status'] = $status;
